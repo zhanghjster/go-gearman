@@ -27,7 +27,6 @@ type Task struct {
 	// task response chan
 	respCh chan *Response
 
-	// for get task status
 	peer *TransportPeer
 
 	// for close
@@ -47,30 +46,32 @@ func (t *Task) IsBackground() bool {
 func (t *Task) wait() {
 	var done bool
 	for !done {
-		resp := <-t.respCh
-
-		var handler ResponseHandler
-		switch resp.Type {
-		case PtWorkComplete:
-			handler = func(resp *Response) {
-				defer t.Done()
-				if t.OnData != nil {
-					t.OnData(resp)
+		select {
+		case resp := <-t.respCh:
+			var handler ResponseHandler
+			switch resp.Type {
+			case PtWorkComplete:
+				handler = func(resp *Response) {
+					defer t.Done()
+					if t.OnData != nil {
+						t.OnData(resp)
+					}
 				}
+				done = true
+			case PtWorkData:
+				handler = t.OnData
+			case PtWorkWarning:
+				handler = t.OnWarning
+			case PtWorkFail:
+				handler = t.OnFail
+			case PtWorkException:
+				handler = t.OnException
 			}
-			done = true
-		case PtWorkData:
-			handler = t.OnData
-		case PtWorkWarning:
-			handler = t.OnWarning
-		case PtWorkFail:
-			handler = t.OnFail
-		case PtWorkException:
-			handler = t.OnException
-		}
 
-		if handler != nil {
-			go handler(resp)
+			if handler != nil {
+				go handler(resp)
+			}
+		case <-t.peer.Closed():
 		}
 	}
 }
@@ -82,20 +83,15 @@ func (t *Task) Done() {
 type TaskSet struct {
 	tasks map[string]*Task
 
-	ds *Dispatcher
-
 	trMux sync.RWMutex // lock for task remove
-	tcMux sync.Mutex   // lock for task creation
 
-	tcCh chan *Response // task creation chan
-	suCh chan *Response // status update chan
+	tcSender *sender
+	tsSender *sender
 }
 
 func NewTaskSet() *TaskSet {
 	return &TaskSet{
 		tasks: make(map[string]*Task),
-		tcCh:  make(chan *Response),
-		suCh:  make(chan *Response),
 	}
 }
 
@@ -113,6 +109,8 @@ func (t *TaskSet) AddTask(funcName string, data []byte, opts ...TaskOptFunc) (*T
 
 	var req = new(Request)
 
+	// TODO: set default timeout
+
 	// set request args
 	req.SetType(task.Type)
 	req.SetFuncName(task.FuncName)
@@ -123,15 +121,10 @@ func (t *TaskSet) AddTask(funcName string, data []byte, opts ...TaskOptFunc) (*T
 		opt(req)
 	}
 
-	t.tcMux.Lock()
-	defer t.tcMux.Unlock()
-
-	if err := t.ds.Send(req); err != nil {
+	resp, err := t.tcSender.asyncSend(req)
+	if err != nil {
 		return nil, err
 	}
-
-	// wait for response
-	resp := <-t.tcCh
 
 	// set handle
 	handle, err := resp.GetHandle()
@@ -140,10 +133,11 @@ func (t *TaskSet) AddTask(funcName string, data []byte, opts ...TaskOptFunc) (*T
 	}
 
 	task.peer = resp.peer
+
 	task.Handle = handle
 
 	// save background task
-	if task.IsBackground() {
+	if !task.IsBackground() {
 		t.tasks[task.Handle] = task
 		task.wait()
 
@@ -176,11 +170,10 @@ func (t *TaskSet) TaskStatus(handle string, opts ...TaskStatusOptFunc) (ts TaskS
 		opt(req)
 	}
 
-	if err = t.ds.Send(req); err != nil {
-		return
+	resp, err := t.tsSender.asyncSend(req)
+	if err != nil {
+		return ts, err
 	}
-
-	resp := <-t.suCh
 
 	// TODO: debug int parse
 	ts.Known, _ = resp.GetStatusKnow()
@@ -193,12 +186,15 @@ func (t *TaskSet) TaskStatus(handle string, opts ...TaskStatusOptFunc) (ts TaskS
 }
 
 func (t *TaskSet) RegisterResponseHandle(ds *Dispatcher) *TaskSet {
+	t.tcSender = &sender{ds: ds, respCh: make(chan *Response)}
+	t.tsSender = &sender{ds: ds, respCh: make(chan *Response)}
+
 	var handlers = []ResponseTypeHandler{
 		{
-			[]PacketType{PtJobCreated}, t.jobCreationResponseHandle,
+			[]PacketType{PtJobCreated}, func(resp *Response) { t.tcSender.respCh <- resp },
 		},
 		{
-			[]PacketType{PtStatusRes, PtStatusResUnique}, t.statusResponseHandle,
+			[]PacketType{PtStatusRes, PtStatusResUnique}, func(resp *Response) { t.tsSender.respCh <- resp },
 		},
 		{
 			[]PacketType{PtWorkData, PtWorkStatus, PtWorkComplete, PtWorkWarning, PtWorkFail, PtWorkException},
@@ -206,12 +202,11 @@ func (t *TaskSet) RegisterResponseHandle(ds *Dispatcher) *TaskSet {
 		},
 	}
 
-	t.ds = ds.RegisterResponseHandler(handlers...)
+	ds.RegisterResponseHandler(handlers...)
+
 	return t
 }
 
-func (t *TaskSet) jobCreationResponseHandle(resp *Response) { t.tcCh <- resp }
-func (t *TaskSet) statusResponseHandle(resp *Response)      { t.suCh <- resp }
 func (t *TaskSet) workResponseHandle(resp *Response) {
 	handle, _ := resp.GetHandle()
 

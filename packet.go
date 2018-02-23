@@ -7,6 +7,8 @@ import (
 
 	"bytes"
 
+	"net"
+
 	"github.com/pkg/errors"
 )
 
@@ -363,7 +365,13 @@ type Response struct {
 
 type Request struct {
 	Packet
-	broadcast bool
+
+	Timeout <-chan time.Time
+
+	remote    net.Addr // asyncSend to picked server
+	broadcast bool     // asyncSend to all server
+
+	resCh chan interface{} // for conn asyncSend result
 }
 
 type ResponseHandler func(resp *Response)

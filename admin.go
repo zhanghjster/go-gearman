@@ -7,8 +7,8 @@ import (
 )
 
 type Admin struct {
-	ds *Dispatcher
-	ch chan *Response
+	sender *sender
+	ch     chan *Response
 }
 
 func NewAdmin(server []string) *Admin {
@@ -18,13 +18,15 @@ func NewAdmin(server []string) *Admin {
 func (adm *Admin) Init(server []string) *Admin {
 	adm.ch = make(chan *Response)
 
-	adm.ds = NewDispatcher(server)
+	ds := NewDispatcher(server)
+
+	adm.sender = &sender{ds: ds, respCh: make(chan *Response)}
 
 	handlers := []ResponseTypeHandler{
-		{[]PacketType{PtAdminResp}, func(resp *Response) { adm.ch <- resp }},
+		{[]PacketType{PtAdminResp}, func(resp *Response) { adm.sender.respCh <- resp }},
 	}
 
-	adm.ds.RegisterResponseHandler(handlers...)
+	ds.RegisterResponseHandler(handlers...)
 
 	return adm
 }
@@ -34,16 +36,22 @@ func (adm *Admin) Do(opt AdmOptFunc) (data [][]byte, err error) {
 		return nil, errors.New("admin command not set")
 	}
 
-	req := &Request{broadcast: true}
+	req := new(Request)
 
 	var waitResp bool
 	opt(req, &waitResp)
 
-	adm.ds.Send(req)
+	adm.sender.asyncSend(req)
 
 	if waitResp {
-		resp := <-adm.ch
-		data = resp.ArgsBytes()
+		resp, err := adm.sender.asyncSend(req)
+		if err != nil {
+			return nil, err
+		} else {
+			return resp.ArgsBytes(), nil
+		}
+	} else {
+		return nil, adm.sender.send(req)
 	}
 
 	return

@@ -2,24 +2,27 @@ package gearman
 
 import (
 	"log"
+	"net"
+
+	"github.com/pkg/errors"
 )
 
 type Dispatcher struct {
 	reqCh       chan *Request
-	transports  map[TransportPeer]*Transport
+	transports  map[net.Addr]*Transport
 	respHandler map[PacketType]ResponseHandler
 }
 
 func NewDispatcher(server []string) *Dispatcher {
 	var d = &Dispatcher{
 		reqCh:       make(chan *Request),
-		transports:  make(map[TransportPeer]*Transport),
+		transports:  make(map[net.Addr]*Transport),
 		respHandler: make(map[PacketType]ResponseHandler),
 	}
 
 	for _, s := range server {
 		ts := NewTransport(s)
-		d.transports[ts.Peer] = ts
+		d.transports[ts.Peer.Remote] = ts
 
 		// loop for read and dispatch response
 		go func(*Transport) {
@@ -36,7 +39,7 @@ func NewDispatcher(server []string) *Dispatcher {
 			}
 		}(ts)
 
-		// loop for send request by random server
+		// loop for asyncSend request by random server
 		go func(*Transport) {
 			for {
 				if err := ts.Write(<-d.reqCh); err != nil {
@@ -50,18 +53,23 @@ func NewDispatcher(server []string) *Dispatcher {
 }
 
 func (d *Dispatcher) Send(req *Request) error {
-	if req.broadcast { // send to all server
+	if req.broadcast { // asyncSend to all server
 		for _, ts := range d.transports {
 			if err := ts.Write(req); err != nil {
 				return err
 			}
 		}
-	} else if req.peer != nil { // send to picked server
-		if ts, ok := d.transports[*req.peer]; ok {
+	} else if req.peer != nil { // asyncSend to picked server
+		if ts, ok := d.transports[req.peer.Remote]; ok {
 			return ts.Write(req)
 		}
-	} else { // send to random server
-		d.reqCh <- req
+	} else { // asyncSend to random server
+		select {
+		case d.reqCh <- req:
+			return nil
+		case <-req.Timeout:
+			return errors.New("sending request timeout")
+		}
 	}
 
 	return nil
@@ -78,5 +86,5 @@ func (d *Dispatcher) RegisterResponseHandler(handlers ...ResponseTypeHandler) *D
 			d.respHandler[tp] = handler.handle
 		}
 	}
-	return ds
+	return d
 }

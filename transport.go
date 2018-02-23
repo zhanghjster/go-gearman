@@ -71,7 +71,13 @@ var (
 
 type TransportPeer struct {
 	Remote net.Addr
-	Local  net.Addr
+
+	// broadcast conn close
+	flag FlagChan
+}
+
+func (p *TransportPeer) Closed() FlagChan {
+	return p.flag
 }
 
 type Transport struct {
@@ -82,7 +88,7 @@ type Transport struct {
 	bc *bufConnection
 
 	// address
-	Peer TransportPeer
+	Peer *TransportPeer
 }
 
 func NewTransport(server string) *Transport {
@@ -93,6 +99,11 @@ func (t *Transport) Init(server string) *Transport {
 	go func() {
 		// auto reconnect
 		for {
+			// close the old peer
+			if t.Peer != nil {
+				close(t.Peer.flag)
+			}
+
 			conn, err := newConnection(server)
 			if err != nil {
 				log.Println("conn init fail " + err.Error())
@@ -102,9 +113,10 @@ func (t *Transport) Init(server string) *Transport {
 
 			log.Printf("connect %s suc", server)
 
+			// make new Peer
+			t.Peer = &TransportPeer{conn.remoteAddr(), make(FlagChan)}
+
 			t.bc = conn
-			t.Peer.Remote = t.bc.remoteAddr()
-			t.Peer.Local = t.bc.localAddr()
 
 			var wg sync.WaitGroup
 			go t.readLoop(&wg)
@@ -147,7 +159,7 @@ func (t *Transport) readLoop(wg *sync.WaitGroup) {
 
 		var resp = &Response{
 			Packet: Packet{
-				peer: &t.Peer,
+				peer: t.Peer,
 				Type: r.Type(),
 				args: r.Lines(),
 			},
@@ -169,9 +181,17 @@ func (t *Transport) writeLoop(wg *sync.WaitGroup) {
 				log.Printf("packet write err, %s ", err.Error())
 			}
 
+			// write request result chan
 			if IsConnErr(err) {
+				// response the result
+				if req.resCh != nil {
+					go func() { req.resCh <- err }()
+				}
 				return
 			}
+
+			// update the peer
+			req.peer = t.Peer
 		case <-t.bc.closed():
 			return
 		}
