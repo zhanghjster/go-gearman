@@ -33,8 +33,8 @@ type Task struct {
 	done chan struct{}
 }
 
-type TaskOptFunc func(*Task)
 type ReqOptFunc func(*Request)
+type TaskOptFunc func(*Task)
 type TaskStatusOptFunc func(*Request)
 
 func (t *Task) IsBackground() bool {
