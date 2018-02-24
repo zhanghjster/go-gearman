@@ -4,6 +4,9 @@ import (
 	"log"
 	"net"
 
+	"fmt"
+	"time"
+
 	"github.com/pkg/errors"
 )
 
@@ -39,7 +42,7 @@ func NewDispatcher(server []string) *Dispatcher {
 			}
 		}(ts)
 
-		// loop for asyncSend request by random server
+		// loop for send request by random server
 		go func(*Transport) {
 			for {
 				if err := ts.Write(<-d.reqCh); err != nil {
@@ -52,27 +55,29 @@ func NewDispatcher(server []string) *Dispatcher {
 	return d
 }
 
-func (d *Dispatcher) Send(req *Request) error {
-	if req.broadcast { // asyncSend to all server
+var DefaultSendTimeout = 10 * time.Second
+
+func (d *Dispatcher) Send(req *Request) (err error) {
+	if req.broadcast { // send to all server
 		for _, ts := range d.transports {
-			if err := ts.Write(req); err != nil {
-				return err
+			if e := ts.Write(req); e != nil {
+				// merge the err string
+				if err == nil {
+					err = e
+				} else {
+					err = errors.New(fmt.Sprintf("%s\n%s", err.Error(), e.Error()))
+				}
 			}
 		}
-	} else if req.peer != nil { // asyncSend to picked server
+	} else if req.peer != nil { // send to picked server
 		if ts, ok := d.transports[req.peer.Remote]; ok {
-			return ts.Write(req)
+			err = ts.Write(req)
 		}
-	} else { // asyncSend to random server
-		select {
-		case d.reqCh <- req:
-			return nil
-		case <-req.Timeout:
-			return errors.New("sending request timeout")
-		}
+	} else { // send Wait to random server
+		err = enqueRequestWithTimeout(d.reqCh, req)
 	}
 
-	return nil
+	return err
 }
 
 type ResponseTypeHandler struct {

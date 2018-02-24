@@ -128,9 +128,8 @@ func (t *Transport) Init(server string) *Transport {
 	return t
 }
 
-func (t *Transport) Write(p *Request) error {
-	t.in <- p
-	return nil
+func (t *Transport) Write(req *Request) error {
+	return enqueRequestWithTimeout(t.in, req)
 }
 
 func (t *Transport) Read() (*Response, error) {

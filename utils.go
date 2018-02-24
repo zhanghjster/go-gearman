@@ -1,36 +1,14 @@
 package gearman
 
 import (
-	"time"
-
 	"sync"
+
+	"time"
 
 	"github.com/pkg/errors"
 )
 
 type FlagChan chan struct{}
-
-type Session struct {
-	Peer  *TransportPeer
-	after <-chan time.Time
-}
-
-func NewSession(peer *TransportPeer) *Session {
-	return &Session{Peer: peer, after: make(chan time.Time)}
-}
-
-func (s *Session) Closed() FlagChan {
-	return s.Peer.Closed()
-}
-
-func (s *Session) Timeout() <-chan time.Time {
-	return s.after
-}
-
-func (s *Session) timeoutAfter(t time.Duration) *Session {
-	s.after = time.After(t)
-	return s
-}
 
 type sender struct {
 	mux sync.Mutex
@@ -39,7 +17,7 @@ type sender struct {
 	respCh chan *Response
 }
 
-func (s *sender) asyncSend(req *Request) (resp *Response, err error) {
+func (s *sender) sendAndWait(req *Request) (resp *Response, err error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 
@@ -47,6 +25,7 @@ func (s *sender) asyncSend(req *Request) (resp *Response, err error) {
 		return nil, err
 	}
 
+	// wait for response
 	select {
 	case resp = <-s.respCh:
 	case <-req.peer.Closed():
@@ -57,18 +36,32 @@ func (s *sender) asyncSend(req *Request) (resp *Response, err error) {
 }
 
 func (s *sender) send(req *Request) error {
+	// chan for response
 	req.resCh = make(chan interface{})
 
-	// asyncSend request
+	// send request
 	if err := s.ds.Send(req); err != nil {
 		return err
 	}
 
-	// wait for asyncSend result
+	// wait for result
 	res := <-req.resCh
 	if err, ok := res.(error); ok {
 		return err
 	}
 
+	return nil
+}
+
+func enqueRequestWithTimeout(ch chan *Request, req *Request) error {
+	if req.Timeout == nil {
+		req.Timeout = time.After(DefaultSendTimeout)
+	}
+
+	select {
+	case ch <- req:
+	case <-req.Timeout:
+		return errors.New("send timeout")
+	}
 	return nil
 }

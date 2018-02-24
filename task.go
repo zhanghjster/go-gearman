@@ -22,7 +22,7 @@ type Task struct {
 	OnData      ResponseHandler
 	OnComplete  ResponseHandler
 
-	argsOpt []ArgsOptFunc
+	reqOpt []ReqOptFunc
 
 	// task response chan
 	respCh chan *Response
@@ -34,7 +34,7 @@ type Task struct {
 }
 
 type TaskOptFunc func(*Task)
-type ArgsOptFunc func(*Request)
+type ReqOptFunc func(*Request)
 type TaskStatusOptFunc func(*Request)
 
 func (t *Task) IsBackground() bool {
@@ -43,7 +43,7 @@ func (t *Task) IsBackground() bool {
 		t.Type == PtSubmitJobLowBg
 }
 
-func (t *Task) wait() {
+func (t *Task) wait() error {
 	var done bool
 	for !done {
 		select {
@@ -53,8 +53,8 @@ func (t *Task) wait() {
 			case PtWorkComplete:
 				handler = func(resp *Response) {
 					defer t.Done()
-					if t.OnData != nil {
-						t.OnData(resp)
+					if t.OnComplete != nil {
+						t.OnComplete(resp)
 					}
 				}
 				done = true
@@ -72,8 +72,11 @@ func (t *Task) wait() {
 				go handler(resp)
 			}
 		case <-t.peer.Closed():
+			return errors.New("conn closed")
 		}
 	}
+
+	return nil
 }
 
 func (t *Task) Done() {
@@ -95,6 +98,7 @@ func NewTaskSet() *TaskSet {
 	}
 }
 
+// add task, see TaskOptFunc for all use case
 func (t *TaskSet) AddTask(funcName string, data []byte, opts ...TaskOptFunc) (*Task, error) {
 	var task = &Task{
 		FuncName: funcName,
@@ -109,19 +113,17 @@ func (t *TaskSet) AddTask(funcName string, data []byte, opts ...TaskOptFunc) (*T
 
 	var req = new(Request)
 
-	// TODO: set default timeout
-
 	// set request args
 	req.SetType(task.Type)
 	req.SetFuncName(task.FuncName)
 	req.SetData(data)
 
 	// args option
-	for _, opt := range task.argsOpt {
+	for _, opt := range task.reqOpt {
 		opt(req)
 	}
 
-	resp, err := t.tcSender.asyncSend(req)
+	resp, err := t.tcSender.sendAndWait(req)
 	if err != nil {
 		return nil, err
 	}
@@ -138,31 +140,21 @@ func (t *TaskSet) AddTask(funcName string, data []byte, opts ...TaskOptFunc) (*T
 
 	// save background task
 	if !task.IsBackground() {
-		t.tasks[task.Handle] = task
-		task.wait()
+		// save to task map
+		t.setTask(handle, task)
 
-		// handle task close signal
-		go func() {
-			<-task.done
-			t.trMux.Lock()
-			delete(t.tasks, task.Handle)
-			t.trMux.Unlock()
-		}()
+		// wait for task finished
+		err = task.wait()
+
+		// remote from task map
+		t.removeTask(task.Handle)
 	}
 
-	return task, nil
+	return task, err
 }
 
-func (t *TaskSet) TaskStatus(handle string, opts ...TaskStatusOptFunc) (ts TaskStatus, err error) {
-	// get the handle
-	t.trMux.RLock()
-	task, ok := t.tasks[handle]
-	t.trMux.RUnlock()
-	if !ok {
-		err = errors.New("task not exist")
-		return
-	}
-
+// check the status of task, see TaskStatusOptFuncs for all use case
+func (t *TaskSet) TaskStatus(task *Task, opts ...TaskStatusOptFunc) (ts TaskStatus, err error) {
 	var req = new(Request)
 	req.SetPeer(task.peer)
 
@@ -170,7 +162,7 @@ func (t *TaskSet) TaskStatus(handle string, opts ...TaskStatusOptFunc) (ts TaskS
 		opt(req)
 	}
 
-	resp, err := t.tsSender.asyncSend(req)
+	resp, err := t.tsSender.sendAndWait(req)
 	if err != nil {
 		return ts, err
 	}
@@ -185,7 +177,7 @@ func (t *TaskSet) TaskStatus(handle string, opts ...TaskStatusOptFunc) (ts TaskS
 	return ts, nil
 }
 
-func (t *TaskSet) RegisterResponseHandle(ds *Dispatcher) *TaskSet {
+func (t *TaskSet) registerResponseHandle(ds *Dispatcher) *TaskSet {
 	t.tcSender = &sender{ds: ds, respCh: make(chan *Response)}
 	t.tsSender = &sender{ds: ds, respCh: make(chan *Response)}
 
@@ -209,12 +201,28 @@ func (t *TaskSet) RegisterResponseHandle(ds *Dispatcher) *TaskSet {
 
 func (t *TaskSet) workResponseHandle(resp *Response) {
 	handle, _ := resp.GetHandle()
-
-	t.trMux.RLock()
-	if task, ok := t.tasks[handle]; ok {
+	if task, ok := t.getTask(handle); ok {
 		go func() { task.respCh <- resp }()
 	}
-	t.trMux.RUnlock()
+}
+
+func (t *TaskSet) setTask(handle string, task *Task) {
+	t.trMux.Lock()
+	defer t.trMux.Unlock()
+	t.tasks[handle] = task
+}
+
+func (t *TaskSet) getTask(handle string) (*Task, bool) {
+	t.trMux.RLock()
+	defer t.trMux.RUnlock()
+	task, ok := t.tasks[handle]
+	return task, ok
+}
+
+func (t *TaskSet) removeTask(handle string) {
+	t.trMux.Lock()
+	defer t.trMux.Unlock()
+	delete(t.tasks, handle)
 }
 
 type TaskStatus struct {
@@ -229,63 +237,101 @@ type TaskStatus struct {
 func taskTypeOpt(tp PacketType) TaskOptFunc {
 	return func(task *Task) { task.Type = tp }
 }
-func TaskOptNormal() TaskOptFunc           { return taskTypeOpt(PtSubmitJob) }
-func TaskOptNormalBackground() TaskOptFunc { return taskTypeOpt(PtSubmitJobBg) }
-func TaskOptHigh() TaskOptFunc             { return taskTypeOpt(PtSubmitJobHigh) }
-func TaskOptHighBackground() TaskOptFunc   { return taskTypeOpt(PtSubmitJobHighBg) }
-func TaskOptLow() TaskOptFunc              { return taskTypeOpt(PtSubmitJobLow) }
-func TaskOptLowBackground() TaskOptFunc    { return taskTypeOpt(PtSubmitJobLowBg) }
 
-// option func for task callbacks
+// set normal priority async task
+func TaskOptNormal() TaskOptFunc { return taskTypeOpt(PtSubmitJob) }
+
+// set normal priority background task
+func TaskOptNormalBackground() TaskOptFunc { return taskTypeOpt(PtSubmitJobBg) }
+
+// set high priority async task
+func TaskOptHigh() TaskOptFunc { return taskTypeOpt(PtSubmitJobHigh) }
+
+// set high priority background task
+func TaskOptHighBackground() TaskOptFunc { return taskTypeOpt(PtSubmitJobHighBg) }
+
+// set low priority async task
+func TaskOptLow() TaskOptFunc { return taskTypeOpt(PtSubmitJobLow) }
+
+// set low priority background task
+func TaskOptLowBackground() TaskOptFunc { return taskTypeOpt(PtSubmitJobLowBg) }
+
+// set async task complete callback
 func TaskOptOnComplete(handler ResponseHandler) TaskOptFunc {
 	return func(t *Task) { t.OnComplete = handler }
 }
+
+// set async task data update callback
 func TaskOptOnData(handler ResponseHandler) TaskOptFunc {
 	return func(t *Task) { t.OnData = handler }
 }
+
+// set async task fail callback
 func TaskOptOnFail(handler ResponseHandler) TaskOptFunc {
 	return func(t *Task) { t.OnFail = handler }
 }
+
+// set async task warning callback
 func TaskOptOnWarning(handler ResponseHandler) TaskOptFunc {
 	return func(t *Task) { t.OnWarning = handler }
 }
+
+// set async task exception callback
 func TaskOptOnException(handler ResponseHandler) TaskOptFunc {
 	return func(t *Task) { t.OnException = handler }
 }
 
-// option func for args
+// set task unique id
 func TaskOptUniqueId(id string) TaskOptFunc {
 	return func(t *Task) {
-		t.argsOpt = append(t.argsOpt, func(req *Request) { req.SetUniqueId(id) })
-	}
-}
-func TaskOptReducer(name string) TaskOptFunc {
-	return func(t *Task) {
-		t.argsOpt = append(t.argsOpt, func(req *Request) { req.SetReducer(name) })
-	}
-}
-func TaskOptSchedule(sched time.Time) TaskOptFunc {
-	return func(t *Task) {
-		t.argsOpt = append(t.argsOpt, func(req *Request) { req.SetSchedule(sched) })
-	}
-}
-func TaskOptEpoch(epoch int64) TaskOptFunc {
-	return func(t *Task) {
-		t.argsOpt = append(t.argsOpt, func(req *Request) { req.SetEpoch(epoch) })
-	}
-}
-func TaskOptConnOption(name string) TaskOptFunc {
-	return func(t *Task) {
-		t.argsOpt = append(t.argsOpt, func(req *Request) { req.SetConnOption(name) })
+		t.reqOpt = append(t.reqOpt, func(req *Request) { req.SetUniqueId(id) })
 	}
 }
 
+// set task reducer
+func TaskOptReducer(name string) TaskOptFunc {
+	return func(t *Task) {
+		t.reqOpt = append(t.reqOpt, func(req *Request) { req.SetReducer(name) })
+	}
+}
+
+// set task schedule
+func TaskOptSchedule(sched time.Time) TaskOptFunc {
+	return func(t *Task) {
+		t.reqOpt = append(t.reqOpt, func(req *Request) { req.SetSchedule(sched) })
+	}
+}
+
+// set task epoch time
+func TaskOptEpoch(epoch int64) TaskOptFunc {
+	return func(t *Task) {
+		t.reqOpt = append(t.reqOpt, func(req *Request) { req.SetEpoch(epoch) })
+	}
+}
+
+// set connection option
+func TaskOptConnOption(name string) TaskOptFunc {
+	return func(t *Task) {
+		t.reqOpt = append(t.reqOpt, func(req *Request) { req.SetConnOption(name) })
+	}
+}
+
+// set timeout of task creation
+func TaskOptCreationTimeout(d time.Duration) TaskOptFunc {
+	return func(t *Task) {
+		t.reqOpt = append(t.reqOpt, func(req *Request) { req.Timeout = time.After(d) })
+	}
+}
+
+// set unique id of task for task status retrieve
 func TaskOptStatusUniqueId(id string) TaskStatusOptFunc {
 	return func(req *Request) {
 		req.SetType(PtGetStatusUnique)
 		req.SetUniqueId(id)
 	}
 }
+
+// set task handle for task status retrieve
 func TaskOptStatusHandle(handle string) TaskStatusOptFunc {
 	return func(req *Request) {
 		req.SetType(PtGetStatus)

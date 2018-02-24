@@ -31,6 +31,7 @@ func (adm *Admin) Init(server []string) *Admin {
 	return adm
 }
 
+// send admin command, see AdmOptFuncs for command options
 func (adm *Admin) Do(opt AdmOptFunc) (data [][]byte, err error) {
 	if opt == nil {
 		return nil, errors.New("admin command not set")
@@ -41,10 +42,8 @@ func (adm *Admin) Do(opt AdmOptFunc) (data [][]byte, err error) {
 	var waitResp bool
 	opt(req, &waitResp)
 
-	adm.sender.asyncSend(req)
-
 	if waitResp {
-		resp, err := adm.sender.asyncSend(req)
+		resp, err := adm.sender.sendAndWait(req)
 		if err != nil {
 			return nil, err
 		} else {
@@ -57,17 +56,25 @@ func (adm *Admin) Do(opt AdmOptFunc) (data [][]byte, err error) {
 	return
 }
 
+// option func for Do()
 type AdmOptFunc func(req *Request, noWait *bool)
 
+// adm option for show worker list
 func AdmOptWorkers() AdmOptFunc {
 	return func(req *Request, no *bool) { req.SetType(PtAdminWorkers) }
 }
+
+// amd option for show status
 func AdmOptStatus() AdmOptFunc {
 	return func(req *Request, no *bool) { req.SetType(PtAdminStatus) }
 }
+
+// adm option for show version
 func AdmOptVersion() AdmOptFunc {
 	return func(req *Request, no *bool) { req.SetType(PtAdminVersion) }
 }
+
+// adm option for shutdown
 func AdmOptShutdown(graceful bool) AdmOptFunc {
 	return func(req *Request, no *bool) {
 		*no = true
@@ -77,12 +84,17 @@ func AdmOptShutdown(graceful bool) AdmOptFunc {
 		}
 	}
 }
+
+// adm option for set max queue for all priority
 func AdmOptMaxQueueAll(funcName string, all int) AdmOptFunc {
 	return maxQueueOpt(funcName, fmt.Sprintf(" %d", all))
 }
+
+// adm option for set max queue for every priority
 func AdmOptMaxQueueThreePriority(funcName string, high, normal, low int) AdmOptFunc {
 	return maxQueueOpt(funcName, fmt.Sprintf(" %d %d %d", high, normal, low))
 }
+
 func maxQueueOpt(funcName, queue string) AdmOptFunc {
 	return func(req *Request, no *bool) {
 		*no = true

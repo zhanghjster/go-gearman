@@ -1,17 +1,16 @@
 package gearman
 
 import (
+	"log"
 	"time"
 )
 
 var DefaultGrabInterval = 10 * time.Millisecond
 
 type Worker struct {
-	ds *Dispatcher
+	sender *sender
 
-	jobsFlag chan struct{}
-
-	respCh chan *Response
+	jobsFlag FlagChan
 
 	// interval for grab job command
 	grabInterval time.Duration
@@ -24,29 +23,30 @@ func NewWorker(server []string) *Worker {
 }
 
 func (w *Worker) Init(server []string) *Worker {
-	w.respCh = make(chan *Response)
+	var ds = NewDispatcher(server)
 
 	w.grabInterval = DefaultGrabInterval
 
-	w.ds = NewDispatcher(server)
+	w.sender = &sender{ds: ds, respCh: make(chan *Response)}
 
 	// register handler
 	var handlers = []ResponseTypeHandler{
-		{Types: []PacketType{PtNoop}, handle: w.noopHandler},
-		{Types: []PacketType{PtNoJob}, handle: w.noJobHandle},
 		{Types: []PacketType{PtJobAssign, PtJobAssignUnique, PtJobAssignAll}, handle: w.jobHandler},
 	}
-	w.ds.RegisterResponseHandler(handlers...)
+	ds.RegisterResponseHandler(handlers...)
 
 	return w
 }
 
+// set max parallel jobs work can handle
 func (w *Worker) MaxParallelJobs(n int) *Worker {
 	if n > 0 {
-		w.jobsFlag = make(chan struct{}, n)
+		w.jobsFlag = make(FlagChan, n)
 	}
 	return w
 }
+
+// set grab job command interval, default 10 millisecond
 func (w *Worker) GrabInterval(t time.Duration) *Worker {
 	w.grabInterval = t
 	return w
@@ -54,15 +54,22 @@ func (w *Worker) GrabInterval(t time.Duration) *Worker {
 
 type WorkerOptFunc func(req *Request)
 
-func WorkerOptCanDo() WorkerOptFunc  { return func(req *Request) { req.SetType(PtCanDo) } }
+// set worker can do
+func WorkerOptCanDo() WorkerOptFunc { return func(req *Request) { req.SetType(PtCanDo) } }
+
+// set worker cant do
 func WorkerOptCantDo() WorkerOptFunc { return func(req *Request) { req.SetType(PtCantDo) } }
+
+// set work can do with timeout
 func WorkerOptCanDoTimeout(t int) WorkerOptFunc {
 	return func(req *Request) {
 		req.SetType(PtCanDoTimeout)
 		req.SetCanDoTimeout(t)
 	}
 }
-func (w *Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerOptFunc) {
+
+// register funcName and handle, see WorkOptFun for all use case
+func (w *Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerOptFunc) error {
 	w.jobHandles[funcName] = handle
 
 	var req = &Request{broadcast: true}
@@ -72,7 +79,7 @@ func (w *Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerO
 
 	opt(req)
 
-	w.sendRequest(req)
+	return w.sendRequest(req)
 }
 
 func (w *Worker) ResetAbilities() {
@@ -81,7 +88,7 @@ func (w *Worker) ResetAbilities() {
 	w.sendRequest(req)
 }
 
-func (w *Worker) Work() {
+func (w *Worker) Work() error {
 	for {
 		if w.jobsFlag != nil {
 			w.jobsFlag <- struct{}{}
@@ -91,13 +98,15 @@ func (w *Worker) Work() {
 		req.SetType(PtGrabJobAll)
 		req.broadcast = true
 
-		w.ds.Send(req)
+		if err := w.sender.send(req); err != nil {
+			log.Printf("err: %s", err.Error())
+		}
 
 		time.Sleep(w.grabInterval)
 	}
 }
 
-func (w *Worker) sendRequest(req *Request) { w.ds.Send(req) }
+func (w *Worker) sendRequest(req *Request) error { return w.sender.send(req) }
 
 func (w *Worker) jobHandler(resp *Response) {
 	var job = &Job{w: w, Response: resp}
@@ -117,8 +126,6 @@ func (w *Worker) jobHandler(resp *Response) {
 		}
 	}
 }
-func (w *Worker) noopHandler(resp *Response) {}
-func (w *Worker) noJobHandle(resp *Response) {}
 
 type WorkOptFunc func(req *Request)
 

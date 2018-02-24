@@ -13,72 +13,74 @@ func (c *Client) Init(server []string) *Client {
 	var ds = NewDispatcher(server)
 
 	// set up modules
-	c.ts = NewTaskSet().RegisterResponseHandle(ds)
-	c.cm = NewClientMisc().RegisterResponseHandler(ds)
+	c.ts = NewTaskSet().registerResponseHandle(ds)
+	c.cm = NewClientMisc().registerResponseHandler(ds)
 
 	return c
 }
 
+// add task, see TaskOptFuncs for all use case
 func (c *Client) AddTask(funcName string, data []byte, opt ...TaskOptFunc) (*Task, error) {
 	return c.ts.AddTask(funcName, data, opt...)
 }
 
-// get task status of handle default
-// set TaskStatusUniqueId(id) opt for task status unique
-func (c *Client) TaskStatus(handle string, opts ...TaskStatusOptFunc) (TaskStatus, error) {
-	return c.ts.TaskStatus(handle, opts...)
+// get task status of handle default, see TaskStatusFuncs for all use case
+func (c *Client) TaskStatus(task *Task, opts ...TaskStatusOptFunc) (TaskStatus, error) {
+	return c.ts.TaskStatus(task, opts...)
 }
 
-func (c *Client) Echo(data []byte) []byte {
+func (c *Client) Echo(data []byte) ([]byte, error) {
 	return c.cm.Echo(data)
 }
 
-func (c *Client) SetConnOption(name string) string {
+func (c *Client) SetConnOption(name string) (string, error) {
 	return c.cm.SetConnOption(name)
 }
 
 type ClientMisc struct {
-	ds *Dispatcher
-
-	orCh chan *Response
-	erCh chan *Response
+	sender *sender
 }
 
 func NewClientMisc() *ClientMisc {
-	return &ClientMisc{
-		orCh: make(chan *Response),
-		erCh: make(chan *Response),
-	}
+	return new(ClientMisc)
 }
 
-func (cm *ClientMisc) SetConnOption(name string) string {
+func (cm *ClientMisc) SetConnOption(name string) (string, error) {
 	var req = new(Request)
 	req.Type = PtOptionReq
 	req.SetConnOption(name)
 
-	resp := <-cm.orCh
+	resp, err := cm.sender.sendAndWait(req)
+	if err != nil {
+		return "", err
+	}
 
-	name, _ = resp.GetConnOption()
-	return name
+	return resp.GetConnOption()
 }
 
-func (cm *ClientMisc) Echo(data []byte) []byte {
+func (cm *ClientMisc) Echo(data []byte) ([]byte, error) {
 	var req = new(Request)
 	req.Type = PtEchoReq
 
-	resp := <-cm.orCh
-
-	data, _ = resp.GetData()
-	return data
-}
-
-func (cm *ClientMisc) RegisterResponseHandler(ds *Dispatcher) *ClientMisc {
-	var handlers = []ResponseTypeHandler{
-		{[]PacketType{PtOptionRes}, func(resp *Response) { cm.orCh <- resp }},
-		{[]PacketType{PtEchoRes}, func(resp *Response) { cm.erCh <- resp }},
+	resp, err := cm.sender.sendAndWait(req)
+	if err != nil {
+		return nil, err
 	}
 
-	cm.ds = ds.RegisterResponseHandler(handlers...)
+	return resp.GetData()
+}
+
+func (cm *ClientMisc) registerResponseHandler(ds *Dispatcher) *ClientMisc {
+	var sender = &sender{ds: ds, respCh: make(chan *Response)}
+
+	var handlers = []ResponseTypeHandler{
+		{[]PacketType{PtOptionRes}, func(resp *Response) { sender.respCh <- resp }},
+		{[]PacketType{PtEchoRes}, func(resp *Response) { sender.respCh <- resp }},
+	}
+
+	ds.RegisterResponseHandler(handlers...)
+
+	cm.sender = sender
 
 	return cm
 }

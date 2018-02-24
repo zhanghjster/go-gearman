@@ -368,10 +368,10 @@ type Request struct {
 
 	Timeout <-chan time.Time
 
-	remote    net.Addr // asyncSend to picked server
-	broadcast bool     // asyncSend to all server
+	remote    net.Addr // sendAndWait to picked server
+	broadcast bool     // sendAndWait to all server
 
-	resCh chan interface{} // for conn asyncSend result
+	resCh chan interface{} // for conn sendAndWait result
 }
 
 type ResponseHandler func(resp *Response)
