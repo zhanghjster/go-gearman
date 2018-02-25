@@ -88,8 +88,8 @@ type TaskSet struct {
 
 	trMux sync.RWMutex // lock for task remove
 
-	tcSender *sender
-	tsSender *sender
+	tcSender *Sender
+	tsSender *Sender
 }
 
 func NewTaskSet() *TaskSet {
@@ -178,8 +178,8 @@ func (t *TaskSet) TaskStatus(task *Task, opts ...TaskStatusOptFunc) (ts TaskStat
 }
 
 func (t *TaskSet) registerResponseHandle(ds *Dispatcher) *TaskSet {
-	t.tcSender = &sender{ds: ds, respCh: make(chan *Response)}
-	t.tsSender = &sender{ds: ds, respCh: make(chan *Response)}
+	t.tcSender = &Sender{ds: ds, respCh: make(chan *Response)}
+	t.tsSender = &Sender{ds: ds, respCh: make(chan *Response)}
 
 	var handlers = []ResponseTypeHandler{
 		{

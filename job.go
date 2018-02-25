@@ -1,5 +1,7 @@
 package gearman
 
+import "errors"
+
 type JobHandle func(job *Job)
 
 type Job struct {
@@ -7,19 +9,23 @@ type Job struct {
 	w *Worker
 }
 
-func (j *Job) Update(opt WorkOptFunc) {
+func (j *Job) Update(opt WorkOptFunc) error {
 	if opt == nil {
-		return
+		return errors.New("opt nil")
 	}
 
 	var req = new(Request)
 
-	handle, _ := j.GetHandle()
+	handle, err := j.GetHandle()
+	if err != nil {
+		return err
+	}
+
 	req.SetHandle(handle)
 
 	req.peer = j.peer
 
 	opt(req)
 
-	j.w.sendRequest(req)
+	return j.w.sendRequest(req)
 }

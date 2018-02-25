@@ -7,8 +7,6 @@ import (
 
 	"bytes"
 
-	"net"
-
 	"github.com/pkg/errors"
 )
 
@@ -368,10 +366,23 @@ type Request struct {
 
 	Timeout <-chan time.Time
 
-	remote    net.Addr // sendAndWait to picked server
-	broadcast bool     // sendAndWait to all server
+	broadcast bool // send to all server
 
-	resCh chan interface{} // for conn sendAndWait result
+	resCh chan interface{} // for conn send result
 }
+
+func newRequestWithType(tp PacketType) *Request {
+	req := new(Request)
+	req.SetType(tp)
+	return req
+}
+
+func newBroadcastRequestWithType(tp PacketType) *Request {
+	req := newRequestWithType(tp)
+	req.broadcast = true
+	return req
+}
+
+func newBroadcaseRequest() *Request { return &Request{broadcast: true} }
 
 type ResponseHandler func(resp *Response)

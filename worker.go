@@ -8,7 +8,7 @@ import (
 var DefaultGrabInterval = 10 * time.Millisecond
 
 type Worker struct {
-	sender *sender
+	sender *Sender
 
 	jobsFlag FlagChan
 
@@ -27,7 +27,7 @@ func (w *Worker) Init(server []string) *Worker {
 
 	w.grabInterval = DefaultGrabInterval
 
-	w.sender = &sender{ds: ds, respCh: make(chan *Response)}
+	w.sender = &Sender{ds: ds, respCh: make(chan *Response)}
 
 	// register handler
 	var handlers = []ResponseTypeHandler{
@@ -70,12 +70,13 @@ func WorkerOptCanDoTimeout(t int) WorkerOptFunc {
 
 // register funcName and handle, see WorkOptFun for all use case
 func (w *Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerOptFunc) error {
-	w.jobHandles[funcName] = handle
-
-	var req = &Request{broadcast: true}
 	if opt == nil {
 		opt = WorkerOptCanDo()
 	}
+
+	w.jobHandles[funcName] = handle
+
+	var req = newBroadcaseRequest()
 
 	opt(req)
 
@@ -83,9 +84,7 @@ func (w *Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerO
 }
 
 func (w *Worker) ResetAbilities() {
-	req := &Request{broadcast: true}
-	req.SetType(PtResetAbilities)
-	w.sendRequest(req)
+	w.sendRequest(newRequestWithType(PtResetAbilities))
 }
 
 func (w *Worker) Work() error {
@@ -94,10 +93,7 @@ func (w *Worker) Work() error {
 			w.jobsFlag <- struct{}{}
 		}
 
-		var req = new(Request)
-		req.SetType(PtGrabJobAll)
-		req.broadcast = true
-
+		var req = newBroadcastRequestWithType(PtGrabJobAll)
 		if err := w.sender.send(req); err != nil {
 			log.Printf("err: %s", err.Error())
 		}

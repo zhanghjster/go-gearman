@@ -25,7 +25,7 @@ var (
 type bufConnection struct {
 	conn net.Conn
 	*bufio.ReadWriter
-	closeCh chan struct{}
+	flag FlagChan
 }
 
 func newConnection(addr string) (*bufConnection, error) {
@@ -35,8 +35,8 @@ func newConnection(addr string) (*bufConnection, error) {
 	}
 
 	var c = &bufConnection{
-		conn:    conn,
-		closeCh: make(chan struct{}),
+		conn: conn,
+		flag: make(FlagChan),
 		ReadWriter: bufio.NewReadWriter(
 			bufio.NewReader(conn),
 			bufio.NewWriter(conn),
@@ -46,13 +46,13 @@ func newConnection(addr string) (*bufConnection, error) {
 	return c, nil
 }
 
-func (c *bufConnection) closed() chan struct{} {
-	return c.closeCh
+func (c *bufConnection) closed() FlagChan {
+	return c.flag
 }
 
 func (c *bufConnection) close() {
-	if c.closeCh != nil {
-		close(c.closeCh)
+	if c.flag != nil {
+		close(c.flag)
 		c.conn.Close()
 	}
 }
@@ -129,7 +129,7 @@ func (t *Transport) Init(server string) *Transport {
 }
 
 func (t *Transport) Write(req *Request) error {
-	return enqueRequestWithTimeout(t.in, req)
+	return enqueueRequestWithTimeout(t.in, req)
 }
 
 func (t *Transport) Read() (*Response, error) {

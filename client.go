@@ -38,7 +38,7 @@ func (c *Client) SetConnOption(name string) (string, error) {
 }
 
 type ClientMisc struct {
-	sender *sender
+	sender *Sender
 }
 
 func NewClientMisc() *ClientMisc {
@@ -46,8 +46,7 @@ func NewClientMisc() *ClientMisc {
 }
 
 func (cm *ClientMisc) SetConnOption(name string) (string, error) {
-	var req = new(Request)
-	req.Type = PtOptionReq
+	var req = newRequestWithType(PtOptionReq)
 	req.SetConnOption(name)
 
 	resp, err := cm.sender.sendAndWait(req)
@@ -59,8 +58,7 @@ func (cm *ClientMisc) SetConnOption(name string) (string, error) {
 }
 
 func (cm *ClientMisc) Echo(data []byte) ([]byte, error) {
-	var req = new(Request)
-	req.Type = PtEchoReq
+	var req = newRequestWithType(PtEchoReq)
 
 	resp, err := cm.sender.sendAndWait(req)
 	if err != nil {
@@ -71,7 +69,7 @@ func (cm *ClientMisc) Echo(data []byte) ([]byte, error) {
 }
 
 func (cm *ClientMisc) registerResponseHandler(ds *Dispatcher) *ClientMisc {
-	var sender = &sender{ds: ds, respCh: make(chan *Response)}
+	var sender = &Sender{ds: ds, respCh: make(chan *Response)}
 
 	var handlers = []ResponseTypeHandler{
 		{[]PacketType{PtOptionRes}, func(resp *Response) { sender.respCh <- resp }},
