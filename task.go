@@ -178,8 +178,8 @@ func (t *TaskSet) TaskStatus(task *Task, opts ...TaskStatusOptFunc) (ts TaskStat
 }
 
 func (t *TaskSet) registerResponseHandle(ds *Dispatcher) *TaskSet {
-	t.tcSender = &Sender{ds: ds, respCh: make(chan *Response)}
-	t.tsSender = &Sender{ds: ds, respCh: make(chan *Response)}
+	t.tcSender = newSender(ds)
+	t.tsSender = newSender(ds)
 
 	var handlers = []ResponseTypeHandler{
 		{

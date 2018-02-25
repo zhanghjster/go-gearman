@@ -69,16 +69,14 @@ func (cm *ClientMisc) Echo(data []byte) ([]byte, error) {
 }
 
 func (cm *ClientMisc) registerResponseHandler(ds *Dispatcher) *ClientMisc {
-	var sender = &Sender{ds: ds, respCh: make(chan *Response)}
+	cm.sender = newSender(ds)
 
 	var handlers = []ResponseTypeHandler{
-		{[]PacketType{PtOptionRes}, func(resp *Response) { sender.respCh <- resp }},
-		{[]PacketType{PtEchoRes}, func(resp *Response) { sender.respCh <- resp }},
+		{[]PacketType{PtOptionRes}, func(resp *Response) { cm.sender.respCh <- resp }},
+		{[]PacketType{PtEchoRes}, func(resp *Response) { cm.sender.respCh <- resp }},
 	}
 
 	ds.RegisterResponseHandler(handlers...)
-
-	cm.sender = sender
 
 	return cm
 }

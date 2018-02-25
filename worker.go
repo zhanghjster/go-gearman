@@ -27,7 +27,7 @@ func (w *Worker) Init(server []string) *Worker {
 
 	w.grabInterval = DefaultGrabInterval
 
-	w.sender = &Sender{ds: ds, respCh: make(chan *Response)}
+	w.sender = newSender(ds)
 
 	// register handler
 	var handlers = []ResponseTypeHandler{

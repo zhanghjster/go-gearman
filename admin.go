@@ -3,6 +3,8 @@ package gearman
 import (
 	"fmt"
 
+	"log"
+
 	"github.com/pkg/errors"
 )
 
@@ -17,10 +19,12 @@ func NewAdmin(server []string) *Admin {
 func (adm *Admin) Init(server []string) *Admin {
 	ds := NewDispatcher(server)
 
-	adm.sender = &Sender{ds: ds, respCh: make(chan *Response)}
+	adm.sender = newSender(ds)
 
 	handlers := []ResponseTypeHandler{
-		{[]PacketType{PtAdminResp}, func(resp *Response) { adm.sender.respCh <- resp }},
+		{[]PacketType{PtAdminResp}, func(resp *Response) {
+			adm.sender.respCh <- resp
+		}},
 	}
 
 	ds.RegisterResponseHandler(handlers...)
@@ -38,6 +42,8 @@ func (adm *Admin) Do(opt AdmOptFunc) (data [][]byte, err error) {
 
 	var noWait bool
 	opt(req, &noWait)
+
+	log.Printf("send admin command %s, wait %v", req.AdminCmdString(), noWait)
 
 	if noWait {
 		err = adm.sender.send(req)
@@ -67,7 +73,7 @@ func AdmOptStatus() AdmOptFunc {
 
 // adm option for show version
 func AdmOptVersion() AdmOptFunc {
-	return func(req *Request, noWat *bool) { req.SetType(PtAdminVersion) }
+	return func(req *Request, noWait *bool) { req.SetType(PtAdminVersion) }
 }
 
 // adm option for shutdown

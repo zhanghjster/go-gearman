@@ -13,7 +13,8 @@ import (
 type PacketType uint32
 
 const (
-	PtCanDo PacketType = iota + 1
+	PtNull PacketType = iota
+	PtCanDo
 	PtCantDo
 	PtResetAbilities
 	PtPreSleep
@@ -188,6 +189,8 @@ func (p *Packet) setArg(name ArgName, v []byte) error {
 		if len(mp) > 0 && p.args == nil {
 			p.args = make([][]byte, len(mp))
 		}
+		p.args[mp[name]] = v
+		return nil
 	}
 
 	return ErrArgNotSupported

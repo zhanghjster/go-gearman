@@ -25,7 +25,12 @@ func NewDispatcher(server []string) *Dispatcher {
 	}
 
 	for _, s := range server {
-		ts := NewTransport(s)
+		ts, err := NewTransport(s)
+		if err != nil {
+			log.Printf("transport init for %s error\n", s)
+			continue
+		}
+
 		d.transports[ts.Peer.Remote] = ts
 
 		// loop for read and dispatch response
@@ -52,6 +57,8 @@ func NewDispatcher(server []string) *Dispatcher {
 			}
 		}(ts)
 	}
+
+	log.Printf("dispatcher init done")
 
 	return d
 }
@@ -104,6 +111,10 @@ type Sender struct {
 	respCh chan *Response
 }
 
+func newSender(ds *Dispatcher) *Sender {
+	return &Sender{ds: ds, respCh: make(chan *Response)}
+}
+
 func (s *Sender) sendAndWait(req *Request) (resp *Response, err error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
@@ -111,6 +122,8 @@ func (s *Sender) sendAndWait(req *Request) (resp *Response, err error) {
 	if err = s.send(req); err != nil {
 		return nil, err
 	}
+
+	log.Println("sender wait for response")
 
 	// wait for response
 	select {
@@ -122,6 +135,7 @@ func (s *Sender) sendAndWait(req *Request) (resp *Response, err error) {
 	return resp, nil
 }
 
+// TODO: sort out better way to handler peer/remote and send result
 func (s *Sender) send(req *Request) error {
 	// chan for response
 	req.resCh = make(chan interface{})
@@ -130,6 +144,8 @@ func (s *Sender) send(req *Request) error {
 	if err := s.ds.Send(req); err != nil {
 		return err
 	}
+
+	// 返回是哪个server发送的
 
 	// wait for result
 	res := <-req.resCh
