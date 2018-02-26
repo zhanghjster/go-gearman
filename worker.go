@@ -40,7 +40,6 @@ func (w *Worker) Init(server []string) *Worker {
 	w.regFlag = make(map[string]FlagChan)
 	w.noopFlag = make(map[string]FlagChan)
 
-	w.miscSender = newSender(ds)
 	w.sender = newSender(ds)
 
 	// register handler
