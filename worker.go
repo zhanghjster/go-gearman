@@ -8,8 +8,7 @@ import (
 var DefaultRegisterInterval = 1 * time.Second
 
 type Worker struct {
-	grabSender *Sender
-	miscSender *Sender
+	sender *Sender
 
 	server []string
 
@@ -42,7 +41,7 @@ func (w *Worker) Init(server []string) *Worker {
 	w.noopFlag = make(map[string]FlagChan)
 
 	w.miscSender = newSender(ds)
-	w.grabSender = newSender(ds)
+	w.sender = newSender(ds)
 
 	// register handler
 	var handlers = []ResponseTypeHandler{
@@ -52,7 +51,7 @@ func (w *Worker) Init(server []string) *Worker {
 		},
 		{
 			Types:  []PacketType{PtNoJob, PtJobAssign, PtJobAssignUnique, PtJobAssignAll},
-			handle: func(resp *Response) { w.grabSender.respCh <- resp },
+			handle: func(resp *Response) { w.sender.respCh <- resp },
 		},
 	}
 	ds.RegisterResponseHandler(handlers...)
@@ -126,7 +125,7 @@ func (w *Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerO
 			}
 
 			for {
-				peer, err := w.miscSender.send(req)
+				peer, err := w.sender.send(req)
 				if err != nil {
 					Log.Printf("register func %s err, %s", funcName, err.Error())
 
@@ -181,7 +180,7 @@ func (w *Worker) Work() {
 
 				Log.Printf("send grab request to %s", s)
 
-				resp, err := w.grabSender.sendAndWaitResp(req)
+				resp, err := w.sender.sendAndWaitResp(req)
 				if err != nil {
 					Log.Printf("send grab req to %s fail", server)
 					return
@@ -202,7 +201,7 @@ func (w *Worker) Work() {
 
 func (w *Worker) sleepUntilWakeup(server string) {
 	var req = newRequestToServerWithType(server, PtPreSleep)
-	peer, err := w.miscSender.send(req)
+	peer, err := w.sender.send(req)
 	if err != nil {
 		Log.Printf("send pre sleep packet to %s fail, %s", server, err)
 		return
@@ -249,7 +248,7 @@ func (w *Worker) descJobs() {
 }
 
 func (w *Worker) sendRequest(req *Request) error {
-	_, err := w.miscSender.send(req)
+	_, err := w.sender.send(req)
 	return err
 }
 
