@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -69,7 +68,7 @@ func (t *Transport) Init(server string) (*Transport, error) {
 			go t.writeLoop(&wg)
 			wg.Wait()
 
-			log.Printf("reconnect after %v\n", DefaultReconnectInterval)
+			Log.Printf("reconnect after %v\n", DefaultReconnectInterval)
 			time.Sleep(DefaultReconnectInterval)
 
 			// do reconnect
@@ -118,18 +117,18 @@ func (t *Transport) readLoop(wg *sync.WaitGroup) {
 		t.bc.close()
 	}()
 
-	log.Printf("reader for %s => %s start\n", t.Peer.Local, t.Peer.Remote)
+	Log.Printf("reader for %s => %s start\n", t.Peer.Local, t.Peer.Remote)
 
 	r := &protocolReader{r: t.bc, hbf: make([]byte, HeaderSize)}
 	for {
 		pt, lines, err := r.read()
 		if err != nil {
-			log.Printf("packet read err %s", err.Error())
+			Log.Printf("packet read err %s", err.Error())
 			continue
 		}
 
 		if IsConnErr(err) {
-			log.Printf("transport conn err %s", err.Error())
+			Log.Printf("transport conn err %s", err.Error())
 			return
 		}
 
@@ -138,7 +137,7 @@ func (t *Transport) readLoop(wg *sync.WaitGroup) {
 			Packet: Packet{Type: pt, args: lines},
 		}
 
-		log.Printf("send response to transport out")
+		Log.Printf("send response to transport out")
 
 		t.out <- resp
 	}
@@ -147,20 +146,20 @@ func (t *Transport) readLoop(wg *sync.WaitGroup) {
 func (t *Transport) writeLoop(wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	log.Printf("writer for %s => %s start\n", t.Peer.Local, t.Peer.Remote)
+	Log.Printf("writer for %s => %s start\n", t.Peer.Local, t.Peer.Remote)
 
 	pw := &protocolWriter{w: t.bc}
 	for {
 		select {
 		case req, ok := <-t.in:
 			if !ok {
-				log.Printf("fail to read from req chan")
+				Log.Printf("fail to read from req chan")
 				return
 			}
 
 			var err error
 			if err = pw.write(req); err != nil {
-				log.Printf("packet write err, %s ", err.Error())
+				Log.Printf("packet write err, %s ", err.Error())
 			}
 
 			// send back the result
@@ -175,7 +174,7 @@ func (t *Transport) writeLoop(wg *sync.WaitGroup) {
 			}
 
 			if IsConnErr(err) {
-				log.Printf("transport writer err %s", err.Error())
+				Log.Printf("transport writer err %s", err.Error())
 				return
 			}
 		case <-t.bc.closed():
@@ -232,7 +231,7 @@ type protocolWriter struct {
 
 func (pw *protocolWriter) write(req *Request) error {
 	if req.IsAdmin() {
-		log.Printf("write adm command %s", req.AdminCmdString())
+		Log.Printf("write adm command %s", req.AdminCmdString())
 		// plain text protocol
 		// write command string
 		if _, err := pw.w.WriteString(req.AdminCmdString()); err != nil {
@@ -241,7 +240,7 @@ func (pw *protocolWriter) write(req *Request) error {
 
 		// write args
 		for _, arg := range req.args {
-			log.Printf("write adm command arg %s", string(arg))
+			Log.Printf("write adm command arg %s", string(arg))
 
 			// write space
 			if _, err := pw.w.Write([]byte(" ")); err != nil {
@@ -287,7 +286,7 @@ func (pw *protocolWriter) write(req *Request) error {
 
 		// write arg lines to conn
 		for i, line := range args {
-			log.Printf("write args line, size %d", len(line))
+			Log.Printf("write args line, size %d", len(line))
 
 			if _, err := pw.w.Write(line); err != nil {
 				return err
@@ -320,7 +319,7 @@ func (pr *protocolReader) read() (PacketType, [][]byte, error) {
 	var lines [][]byte
 
 	if bytes.Equal(first, null) {
-		log.Printf("read new binary packet")
+		Log.Printf("read new binary packet")
 
 		// read the header 12 bytes
 		n, err := pr.r.Read(pr.hbf)
@@ -347,7 +346,7 @@ func (pr *protocolReader) read() (PacketType, [][]byte, error) {
 		// split args by "\0"
 		lines = bytes.Split(args, null)
 	} else {
-		log.Printf("read new adm response")
+		Log.Printf("read new adm response")
 
 		pt = PtAdminResp
 		for {
@@ -356,7 +355,7 @@ func (pr *protocolReader) read() (PacketType, [][]byte, error) {
 				return pt, nil, err
 			}
 
-			log.Printf("read new line of adm resp, %s", string(line))
+			Log.Printf("read new line of adm resp, %s", string(line))
 
 			// end with "."
 			if bytes.Equal(line, []byte(".")) {

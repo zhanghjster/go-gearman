@@ -1,7 +1,6 @@
 package gearman
 
 import (
-	"log"
 	"sync"
 
 	"time"
@@ -25,7 +24,7 @@ func NewDispatcher(server []string) *Dispatcher {
 	for _, s := range server {
 		ts, err := NewTransport(s)
 		if err != nil {
-			log.Printf("transport init for %s error\n", s)
+			Log.Printf("transport init for %s error\n", s)
 			continue
 		}
 
@@ -36,7 +35,7 @@ func NewDispatcher(server []string) *Dispatcher {
 			for {
 				resp, err := ts.Read()
 				if err != nil {
-					log.Printf("read response, %s ", err.Error())
+					Log.Printf("read response, %s ", err.Error())
 					continue
 				}
 
@@ -50,13 +49,13 @@ func NewDispatcher(server []string) *Dispatcher {
 		go func(*Transport) {
 			for {
 				if err := ts.Send(<-d.reqCh); err != nil {
-					log.Printf("write req, %s", err.Error())
+					Log.Printf("write req, %s", err.Error())
 				}
 			}
 		}(ts)
 	}
 
-	log.Printf("dispatcher init done")
+	Log.Printf("dispatcher init done")
 
 	return d
 }
@@ -110,7 +109,7 @@ func (s *Sender) sendAndWaitResp(req *Request) (resp *Response, err error) {
 		return nil, err
 	}
 
-	log.Println("miscSender wait for response")
+	Log.Println("miscSender wait for response")
 
 	// wait for response
 	select {

@@ -3,8 +3,6 @@ package gearman
 import (
 	"fmt"
 
-	"log"
-
 	"github.com/pkg/errors"
 )
 
@@ -41,16 +39,16 @@ func (adm *Admin) Do(server string, opt AdmOptFunc) (data [][]byte, err error) {
 	var req = newRequestTo(server)
 	opt(req, &waitResp)
 
-	log.Printf("send admin cmd %s, wait %v", req.AdminCmdString(), waitResp)
+	Log.Printf("send admin cmd %s, wait %v", req.AdminCmdString(), waitResp)
 
 	if waitResp {
-		_, err = adm.sender.send(req)
-	} else {
 		var resp *Response
 		resp, err = adm.sender.sendAndWaitResp(req)
 		if err == nil {
 			data = resp.ArgsBytes()
 		}
+	} else {
+		_, err = adm.sender.send(req)
 	}
 
 	return

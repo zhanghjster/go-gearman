@@ -6,10 +6,13 @@ import (
 	"os"
 )
 
+var Log log.Logger
+
 func init() {
+	Log.SetFlags(log.LstdFlags)
 	if os.Getenv("GM_DEBUG") == "1" {
-		log.SetOutput(os.Stdout)
+		Log.SetOutput(os.Stdout)
 	} else {
-		log.SetOutput(ioutil.Discard)
+		Log.SetOutput(ioutil.Discard)
 	}
 }

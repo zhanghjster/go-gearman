@@ -1,7 +1,6 @@
 package gearman
 
 import (
-	"log"
 	"sync"
 	"time"
 )
@@ -118,17 +117,18 @@ func (w *Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerO
 			var regOnce bool
 
 			var req = newRequestTo(server)
+			// set request type here by
+			opt(req, &regOnce)
+
 			err := req.SetFuncName(funcName)
 			if err != nil {
-				log.Printf("set func name err %s", err.Error())
+				Log.Printf("set func name err %s", err.Error())
 			}
-
-			opt(req, &regOnce)
 
 			for {
 				peer, err := w.miscSender.send(req)
 				if err != nil {
-					log.Printf("register func %s err, %s", funcName, err.Error())
+					Log.Printf("register func %s err, %s", funcName, err.Error())
 
 					// sleep before re-register
 					time.Sleep(w.registerInterval)
@@ -140,7 +140,7 @@ func (w *Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerO
 					}
 				}
 
-				log.Printf("register func %s to %s suc", funcName, server)
+				Log.Printf("register func %s to %s suc", funcName, server)
 
 				// 'cannot' only send once
 				if regOnce {
@@ -179,11 +179,11 @@ func (w *Worker) Work() {
 				// retrieve next job
 				var req = newRequestToServerWithType(server, PtGrabJob)
 
-				log.Printf("send grab request to %s", s)
+				Log.Printf("send grab request to %s", s)
 
 				resp, err := w.grabSender.sendAndWaitResp(req)
 				if err != nil {
-					log.Printf("send grab req to %s fail", server)
+					Log.Printf("send grab req to %s fail", server)
 					return
 				}
 
@@ -204,23 +204,24 @@ func (w *Worker) sleepUntilWakeup(server string) {
 	var req = newRequestToServerWithType(server, PtPreSleep)
 	peer, err := w.miscSender.send(req)
 	if err != nil {
-		log.Printf("send pre sleep packet to %s fail, %s", server, err)
+		Log.Printf("send pre sleep packet to %s fail, %s", server, err)
 		return
 	}
 
-	log.Printf("job retriever for %s sleep", server)
+	Log.Printf("job retriever for %s sleep", server)
 
 	select {
 	case <-w.noopFlag[server]:
-		log.Printf("job retriever for %s weekup", server)
+		Log.Printf("job retriever for %s weekup", server)
 	case <-peer.Closed():
-		log.Printf("job retriever for %s err. ", err.Error())
+		Log.Printf("job retriever for %s err. ", err.Error())
 	}
 }
 
 func (w *Worker) doJob(resp *Response) {
 	defer w.descJobs()
 
+	Log.Printf("make new job")
 	var job = &Job{w: w, Response: resp}
 
 	funcName, _ := job.GetFuncName()
