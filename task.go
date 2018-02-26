@@ -123,7 +123,7 @@ func (t *TaskSet) AddTask(funcName string, data []byte, opts ...TaskOptFunc) (*T
 		opt(req)
 	}
 
-	resp, err := t.tcSender.sendAndWait(req)
+	resp, err := t.tcSender.sendAndWaitResp(req)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +134,9 @@ func (t *TaskSet) AddTask(funcName string, data []byte, opts ...TaskOptFunc) (*T
 		return nil, err
 	}
 
+	// set peer
 	task.peer = resp.peer
+
 	task.Handle = handle
 
 	if task.NonBackground() {
@@ -154,13 +156,13 @@ func (t *TaskSet) AddTask(funcName string, data []byte, opts ...TaskOptFunc) (*T
 // check the status of task, see TaskStatusOptFuncs for all use case
 func (t *TaskSet) TaskStatus(task *Task, opts ...TaskStatusOptFunc) (ts TaskStatus, err error) {
 	var req = new(Request)
-	req.SetPeer(task.peer)
+	req.Server = task.peer.Remote
 
 	for _, opt := range opts {
 		opt(req)
 	}
 
-	resp, err := t.tsSender.sendAndWait(req)
+	resp, err := t.tsSender.sendAndWaitResp(req)
 	if err != nil {
 		return ts, err
 	}

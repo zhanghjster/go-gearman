@@ -2,20 +2,30 @@ package gearman
 
 import (
 	"log"
+	"sync"
 	"time"
 )
 
-var DefaultGrabInterval = 10 * time.Millisecond
+var DefaultRegisterInterval = 1 * time.Second
 
 type Worker struct {
-	sender *Sender
+	grabSender *Sender
+	miscSender *Sender
+
+	server []string
 
 	jobsFlag FlagChan
 
-	// interval for grab job command
-	grabInterval time.Duration
-
 	jobHandles map[string]JobHandle
+
+	// flag for registration loop
+	regFlag map[string]FlagChan
+
+	// flag for noop
+	noopFlag map[string]FlagChan
+
+	// interval for re-register
+	registerInterval time.Duration
 }
 
 func NewWorker(server []string) *Worker {
@@ -25,13 +35,26 @@ func NewWorker(server []string) *Worker {
 func (w *Worker) Init(server []string) *Worker {
 	var ds = NewDispatcher(server)
 
-	w.grabInterval = DefaultGrabInterval
+	w.server = server
+	w.registerInterval = DefaultRegisterInterval
 
-	w.sender = newSender(ds)
+	w.jobHandles = make(map[string]JobHandle)
+	w.regFlag = make(map[string]FlagChan)
+	w.noopFlag = make(map[string]FlagChan)
+
+	w.miscSender = newSender(ds)
+	w.grabSender = newSender(ds)
 
 	// register handler
 	var handlers = []ResponseTypeHandler{
-		{Types: []PacketType{PtJobAssign, PtJobAssignUnique, PtJobAssignAll}, handle: w.jobHandler},
+		{
+			Types:  []PacketType{PtNoop},
+			handle: func(resp *Response) { w.noopFlag[resp.peer.Remote] <- Flag },
+		},
+		{
+			Types:  []PacketType{PtNoJob, PtJobAssign, PtJobAssignUnique, PtJobAssignAll},
+			handle: func(resp *Response) { w.grabSender.respCh <- resp },
+		},
 	}
 	ds.RegisterResponseHandler(handlers...)
 
@@ -43,26 +66,30 @@ func (w *Worker) MaxParallelJobs(n int) *Worker {
 	if n > 0 {
 		w.jobsFlag = make(FlagChan, n)
 	}
+
 	return w
 }
 
-// set grab job command interval, default 10 millisecond
-func (w *Worker) GrabInterval(t time.Duration) *Worker {
-	w.grabInterval = t
-	return w
-}
-
-type WorkerOptFunc func(req *Request)
+type WorkerOptFunc func(*Request, *bool)
 
 // set worker can do
-func WorkerOptCanDo() WorkerOptFunc { return func(req *Request) { req.SetType(PtCanDo) } }
+func WorkerOptCanDo() WorkerOptFunc {
+	return func(req *Request, regOnce *bool) {
+		req.SetType(PtCanDo)
+	}
+}
 
 // set worker cant do
-func WorkerOptCantDo() WorkerOptFunc { return func(req *Request) { req.SetType(PtCantDo) } }
+func WorkerOptCantDo() WorkerOptFunc {
+	return func(req *Request, regOnce *bool) {
+		*regOnce = true
+		req.SetType(PtCantDo)
+	}
+}
 
 // set work can do with timeout
 func WorkerOptCanDoTimeout(t int) WorkerOptFunc {
-	return func(req *Request) {
+	return func(req *Request, regOnce *bool) {
 		req.SetType(PtCanDoTimeout)
 		req.SetCanDoTimeout(t)
 	}
@@ -76,35 +103,124 @@ func (w *Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerO
 
 	w.jobHandles[funcName] = handle
 
-	var req = newBroadcaseRequest()
-
-	opt(req)
-
-	return w.sendRequest(req)
-}
-
-func (w *Worker) ResetAbilities() {
-	w.sendRequest(newRequestWithType(PtResetAbilities))
-}
-
-func (w *Worker) Work() error {
-	for {
-		if w.jobsFlag != nil {
-			w.jobsFlag <- struct{}{}
+	for _, s := range w.server {
+		// stop the previous reg loop
+		if flag, ok := w.regFlag[funcName]; ok {
+			close(flag)
 		}
 
-		var req = newBroadcastRequestWithType(PtGrabJobAll)
-		if err := w.sender.send(req); err != nil {
-			log.Printf("err: %s", err.Error())
-		}
+		// flag for stop reg loop
+		var done = make(FlagChan)
+		w.regFlag[funcName] = done
 
-		time.Sleep(w.grabInterval)
+		// run reg loop
+		go func(server string) {
+			var regOnce bool
+
+			var req = newRequestTo(server)
+			err := req.SetFuncName(funcName)
+			if err != nil {
+				log.Printf("set func name err %s", err.Error())
+			}
+
+			opt(req, &regOnce)
+
+			for {
+				peer, err := w.miscSender.send(req)
+				if err != nil {
+					log.Printf("register func %s err, %s", funcName, err.Error())
+
+					// sleep before re-register
+					time.Sleep(w.registerInterval)
+					select {
+					case <-done:
+						return
+					default:
+						continue
+					}
+				}
+
+				log.Printf("register func %s to %s suc", funcName, server)
+
+				// 'cannot' only send once
+				if regOnce {
+					break
+				}
+
+				select {
+				case <-peer.Closed():
+				case <-done:
+					return
+				}
+			}
+		}(s)
+	}
+
+	return nil
+}
+
+func (w *Worker) ResetAbilities(server string) {
+	w.sendRequest(newRequestToServerWithType(server, PtResetAbilities))
+}
+
+func (w *Worker) Work() {
+	var wg sync.WaitGroup
+
+	for _, s := range w.server {
+		w.noopFlag[s] = make(FlagChan)
+
+		wg.Add(1)
+		go func(server string) {
+			defer wg.Done()
+
+			for {
+				w.descJobs()
+
+				// retrieve next job
+				var req = newRequestToServerWithType(server, PtGrabJob)
+
+				log.Printf("send grab request to %s", s)
+
+				resp, err := w.grabSender.sendAndWaitResp(req)
+				if err != nil {
+					log.Printf("send grab req to %s fail", server)
+					return
+				}
+
+				switch resp.Type {
+				case PtNoJob:
+					w.sleepUntilWakeup(server)
+				case PtJobAssign, PtJobAssignUnique, PtJobAssignAll:
+					go w.doJob(resp)
+				}
+			}
+		}(s)
+	}
+
+	wg.Wait()
+}
+
+func (w *Worker) sleepUntilWakeup(server string) {
+	var req = newRequestToServerWithType(server, PtPreSleep)
+	peer, err := w.miscSender.send(req)
+	if err != nil {
+		log.Printf("send pre sleep packet to %s fail, %s", server, err)
+		return
+	}
+
+	log.Printf("job retriever for %s sleep", server)
+
+	select {
+	case <-w.noopFlag[server]:
+		log.Printf("job retriever for %s weekup", server)
+	case <-peer.Closed():
+		log.Printf("job retriever for %s err. ", err.Error())
 	}
 }
 
-func (w *Worker) sendRequest(req *Request) error { return w.sender.send(req) }
+func (w *Worker) doJob(resp *Response) {
+	defer w.descJobs()
 
-func (w *Worker) jobHandler(resp *Response) {
 	var job = &Job{w: w, Response: resp}
 
 	funcName, _ := job.GetFuncName()
@@ -114,13 +230,26 @@ func (w *Worker) jobHandler(resp *Response) {
 	}
 
 	handle(job)
+}
 
+func (w *Worker) incJobs() {
 	if w.jobsFlag != nil {
 		select {
 		case <-w.jobsFlag:
 		default:
 		}
 	}
+}
+
+func (w *Worker) descJobs() {
+	if w.jobsFlag != nil {
+		w.jobsFlag <- Flag
+	}
+}
+
+func (w *Worker) sendRequest(req *Request) error {
+	_, err := w.miscSender.send(req)
+	return err
 }
 
 type WorkOptFunc func(req *Request)

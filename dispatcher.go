@@ -2,10 +2,8 @@ package gearman
 
 import (
 	"log"
-	"net"
 	"sync"
 
-	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -13,14 +11,14 @@ import (
 
 type Dispatcher struct {
 	reqCh        chan *Request
-	transports   map[net.Addr]*Transport
+	transports   map[string]*Transport
 	respHandlers map[PacketType]ResponseHandler
 }
 
 func NewDispatcher(server []string) *Dispatcher {
 	var d = &Dispatcher{
 		reqCh:        make(chan *Request),
-		transports:   make(map[net.Addr]*Transport),
+		transports:   make(map[string]*Transport),
 		respHandlers: make(map[PacketType]ResponseHandler),
 	}
 
@@ -31,7 +29,7 @@ func NewDispatcher(server []string) *Dispatcher {
 			continue
 		}
 
-		d.transports[ts.Peer.Remote] = ts
+		d.transports[s] = ts
 
 		// loop for read and dispatch response
 		go func(*Transport) {
@@ -48,10 +46,10 @@ func NewDispatcher(server []string) *Dispatcher {
 			}
 		}(ts)
 
-		// loop for send request by random server
+		// loop for send request to random server
 		go func(*Transport) {
 			for {
-				if err := ts.Write(<-d.reqCh); err != nil {
+				if err := ts.Send(<-d.reqCh); err != nil {
 					log.Printf("write req, %s", err.Error())
 				}
 			}
@@ -65,29 +63,17 @@ func NewDispatcher(server []string) *Dispatcher {
 
 var DefaultSendTimeout = 10 * time.Second
 
-func (d *Dispatcher) Send(req *Request) (err error) {
-	if req.broadcast { // send to all server
-		for _, ts := range d.transports {
-			if e := ts.Write(req); e != nil {
-				// merge the err string
-				if err == nil {
-					err = e
-				} else {
-					err = errors.New(fmt.Sprintf("%s\n%s", err.Error(), e.Error()))
-				}
-			}
-		}
-	} else if req.peer != nil { // send to picked server
-		if ts, ok := d.transports[req.peer.Remote]; ok {
-			err = ts.Write(req)
+func (d *Dispatcher) Send(req *Request) error {
+	if req.Server != "" {
+		if ts, ok := d.transports[req.Server]; ok {
+			return ts.Send(req)
 		} else {
-			err = errors.New("server request send to not exist")
+			return errors.New("server not exist")
 		}
-	} else { // send Wait to random server
-		err = enqueueRequestWithTimeout(d.reqCh, req)
 	}
 
-	return err
+	// inject to chan for transports custom
+	return pushReqToChanWithTimeout(d.reqCh, req)
 }
 
 type ResponseTypeHandler struct {
@@ -115,48 +101,49 @@ func newSender(ds *Dispatcher) *Sender {
 	return &Sender{ds: ds, respCh: make(chan *Response)}
 }
 
-func (s *Sender) sendAndWait(req *Request) (resp *Response, err error) {
+func (s *Sender) sendAndWaitResp(req *Request) (resp *Response, err error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 
-	if err = s.send(req); err != nil {
+	peer, err := s.send(req)
+	if err != nil {
 		return nil, err
 	}
 
-	log.Println("sender wait for response")
+	log.Println("miscSender wait for response")
 
 	// wait for response
 	select {
 	case resp = <-s.respCh:
-	case <-req.peer.Closed():
+	case <-peer.Closed():
 		return nil, errors.New("conn closed")
 	}
 
 	return resp, nil
 }
 
-// TODO: sort out better way to handler peer/remote and send result
-func (s *Sender) send(req *Request) error {
-	// chan for response
-	req.resCh = make(chan interface{})
+func (s *Sender) send(req *Request) (peer *TransportPeer, err error) {
+	// chan for return such as peer or error
+	req.retCh = make(chan interface{})
 
 	// send request
-	if err := s.ds.Send(req); err != nil {
-		return err
+	if err = s.ds.Send(req); err != nil {
+		return nil, err
 	}
-
-	// 返回是哪个server发送的
 
 	// wait for result
-	res := <-req.resCh
-	if err, ok := res.(error); ok {
-		return err
+	res := <-req.retCh
+	switch res.(type) {
+	case error:
+		err = res.(error)
+	case *TransportPeer:
+		peer = res.(*TransportPeer)
 	}
 
-	return nil
+	return
 }
 
-func enqueueRequestWithTimeout(ch chan *Request, req *Request) error {
+func pushReqToChanWithTimeout(ch chan *Request, req *Request) error {
 	if req.Timeout == nil {
 		req.Timeout = time.After(DefaultSendTimeout)
 	}

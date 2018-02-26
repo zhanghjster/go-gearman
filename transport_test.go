@@ -15,7 +15,7 @@ func TestTransport_ReadWrite(t *testing.T) {
 	err = req.SetData([]byte(data))
 	assert.Nil(t, err, "set echo data err")
 
-	err = ts.Write(req)
+	err = ts.Send(req)
 	assert.Nil(t, err, "write should be no err")
 	resp, err := ts.Read()
 
@@ -31,7 +31,7 @@ func BenchmarkTransport_ReadWrite(b *testing.B) {
 	ts, _ := NewTransport("127.0.0.1:4730")
 	var req = newRequestWithType(PtEchoReq)
 	for i := 0; i < b.N; i++ {
-		ts.Write(req)
+		ts.Send(req)
 		ts.Read()
 	}
 }

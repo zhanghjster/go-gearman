@@ -14,7 +14,7 @@ func (j *Job) Update(opt WorkOptFunc) error {
 		return errors.New("opt nil")
 	}
 
-	var req = new(Request)
+	var req = newRequestTo(j.peer.Remote)
 
 	handle, err := j.GetHandle()
 	if err != nil {
@@ -22,8 +22,6 @@ func (j *Job) Update(opt WorkOptFunc) error {
 	}
 
 	req.SetHandle(handle)
-
-	req.peer = j.peer
 
 	opt(req)
 

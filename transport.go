@@ -21,55 +21,14 @@ var (
 	magicREQ = string(null) + "REQ"
 )
 
-// connection wrap a buffer read/writer
-type bufConnection struct {
-	conn net.Conn
-	*bufio.ReadWriter
-	flag FlagChan
-}
-
-func newConnection(addr string) (*bufConnection, error) {
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-
-	var c = &bufConnection{
-		conn: conn,
-		flag: make(FlagChan),
-		ReadWriter: bufio.NewReadWriter(
-			bufio.NewReader(conn),
-			bufio.NewWriter(conn),
-		),
-	}
-
-	return c, nil
-}
-
-func (c *bufConnection) closed() FlagChan {
-	return c.flag
-}
-
-func (c *bufConnection) close() {
-	c.conn.Close()
-	close(c.flag)
-}
-
-func (c *bufConnection) remoteAddr() net.Addr {
-	return c.conn.RemoteAddr()
-}
-
-func (c *bufConnection) localAddr() net.Addr {
-	return c.conn.LocalAddr()
-}
-
 var (
 	DefaultReconnectInterval = 1 * time.Second
 )
 
 type TransportPeer struct {
-	Remote net.Addr
-	Local  net.Addr
+	Remote string
+	Local  string
+
 	// broadcast conn close
 	flag FlagChan
 }
@@ -110,7 +69,7 @@ func (t *Transport) Init(server string) (*Transport, error) {
 			go t.writeLoop(&wg)
 			wg.Wait()
 
-			log.Printf("conn closed, reconnect after %v\n", DefaultReconnectInterval)
+			log.Printf("reconnect after %v\n", DefaultReconnectInterval)
 			time.Sleep(DefaultReconnectInterval)
 
 			// do reconnect
@@ -122,8 +81,8 @@ func (t *Transport) Init(server string) (*Transport, error) {
 }
 
 // write request to remote server
-func (t *Transport) Write(req *Request) error {
-	return enqueueRequestWithTimeout(t.in, req)
+func (t *Transport) Send(req *Request) error {
+	return pushReqToChanWithTimeout(t.in, req)
 }
 
 // read response until there is one
@@ -145,8 +104,8 @@ func (t *Transport) connect(server string) error {
 	}
 
 	t.Peer = &TransportPeer{
-		Remote: conn.remoteAddr(),
-		Local:  conn.localAddr(),
+		Remote: server,
+		Local:  conn.localAddr().String(),
 		flag:   make(FlagChan),
 	}
 
@@ -159,7 +118,7 @@ func (t *Transport) readLoop(wg *sync.WaitGroup) {
 		t.bc.close()
 	}()
 
-	log.Printf("reader for %s => %s start\n", t.Peer.Local.String(), t.Peer.Remote.String())
+	log.Printf("reader for %s => %s start\n", t.Peer.Local, t.Peer.Remote)
 
 	r := &protocolReader{r: t.bc, hbf: make([]byte, HeaderSize)}
 	for {
@@ -175,7 +134,8 @@ func (t *Transport) readLoop(wg *sync.WaitGroup) {
 		}
 
 		var resp = &Response{
-			Packet: Packet{peer: t.Peer, Type: pt, args: lines},
+			peer:   t.Peer,
+			Packet: Packet{Type: pt, args: lines},
 		}
 
 		log.Printf("send response to transport out")
@@ -187,7 +147,7 @@ func (t *Transport) readLoop(wg *sync.WaitGroup) {
 func (t *Transport) writeLoop(wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	log.Printf("writer for %s => %s start\n", t.Peer.Local.String(), t.Peer.Remote.String())
+	log.Printf("writer for %s => %s start\n", t.Peer.Local, t.Peer.Remote)
 
 	pw := &protocolWriter{w: t.bc}
 	for {
@@ -204,21 +164,66 @@ func (t *Transport) writeLoop(wg *sync.WaitGroup) {
 			}
 
 			// send back the result
-			if req.resCh != nil {
-				go func() { req.resCh <- err }()
+			if req.retCh != nil {
+				go func() {
+					if err != nil {
+						req.retCh <- err
+					} else {
+						req.retCh <- t.Peer
+					}
+				}()
 			}
 
 			if IsConnErr(err) {
 				log.Printf("transport writer err %s", err.Error())
 				return
 			}
-
-			// update the peer
-			req.peer = t.Peer
 		case <-t.bc.closed():
 			return
 		}
 	}
+}
+
+// connection wrap a buffer read/writer
+type bufConnection struct {
+	conn net.Conn
+	*bufio.ReadWriter
+	flag FlagChan
+}
+
+func newConnection(addr string) (*bufConnection, error) {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	var c = &bufConnection{
+		conn: conn,
+		flag: make(FlagChan),
+		ReadWriter: bufio.NewReadWriter(
+			bufio.NewReader(conn),
+			bufio.NewWriter(conn),
+		),
+	}
+
+	return c, nil
+}
+
+func (c *bufConnection) closed() FlagChan {
+	return c.flag
+}
+
+func (c *bufConnection) close() {
+	c.conn.Close()
+	close(c.flag)
+}
+
+func (c *bufConnection) remoteAddr() net.Addr {
+	return c.conn.RemoteAddr()
+}
+
+func (c *bufConnection) localAddr() net.Addr {
+	return c.conn.LocalAddr()
 }
 
 type protocolWriter struct {
@@ -347,13 +352,20 @@ func (pr *protocolReader) read() (PacketType, [][]byte, error) {
 		pt = PtAdminResp
 		for {
 			line, _, err := pr.r.ReadLine()
-			log.Printf("read new line of adm response, %s", string(line))
-
 			if err != nil {
-				return PtNull, nil, err
+				return pt, nil, err
 			}
+
+			log.Printf("read new line of adm resp, %s", string(line))
+
+			// end with "."
+			if bytes.Equal(line, []byte(".")) {
+				break
+			}
+
 			lines = append(lines, line)
-			if bytes.Equal(line, []byte(".")) || bytes.Equal(line[0:2], []byte("OK")) {
+
+			if bytes.Equal(line[0:2], []byte("OK")) {
 				break
 			}
 		}

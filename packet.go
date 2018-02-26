@@ -132,9 +132,9 @@ var packetArgs = map[PacketType][]ArgName{
 	PtStatusRes:         {ArgHandle, ArgKnowStatus, ArgRunningStatus, ArgPercentNumerator, ArgPercentDenominator},
 	PtStatusResUnique:   {ArgHandle, ArgKnowStatus, ArgRunningStatus, ArgPercentNumerator, ArgPercentDenominator, ArgWaitingClientsNum},
 	PtOptionRes:         {ArgConnOption},
-	PtCanDo:             {ArgHandle, ArgData},
-	PtCanDoTimeout:      {ArgFuncName, ArgTimeout},
+	PtCanDo:             {ArgFuncName},
 	PtCantDo:            {ArgFuncName},
+	PtCanDoTimeout:      {ArgFuncName, ArgTimeout},
 	PtResetAbilities:    {},
 	PtPreSleep:          {},
 	PtGrabJob:           {},
@@ -170,7 +170,6 @@ var (
 
 type Packet struct {
 	Type PacketType
-	peer *TransportPeer
 	args [][]byte
 }
 
@@ -198,9 +197,6 @@ func (p *Packet) setArg(name ArgName, v []byte) error {
 
 func (p *Packet) SetType(tp PacketType) {
 	p.Type = tp
-}
-func (p *Packet) SetPeer(peer *TransportPeer) {
-	p.peer = peer
 }
 
 func (p *Packet) SetReducer(name string) error {
@@ -361,17 +357,15 @@ func (p *Packet) ArgsBytes() [][]byte {
 }
 
 type Response struct {
+	peer *TransportPeer
 	Packet
 }
 
 type Request struct {
 	Packet
-
+	Server  string           // server request send to
+	retCh   chan interface{} // for conn send func return
 	Timeout <-chan time.Time
-
-	broadcast bool // send to all server
-
-	resCh chan interface{} // for conn send result
 }
 
 func newRequestWithType(tp PacketType) *Request {
@@ -380,12 +374,11 @@ func newRequestWithType(tp PacketType) *Request {
 	return req
 }
 
-func newBroadcastRequestWithType(tp PacketType) *Request {
-	req := newRequestWithType(tp)
-	req.broadcast = true
+func newRequestTo(server string) *Request { return &Request{Server: server} }
+func newRequestToServerWithType(server string, pt PacketType) *Request {
+	req := newRequestTo(server)
+	req.SetType(pt)
 	return req
 }
-
-func newBroadcaseRequest() *Request { return &Request{broadcast: true} }
 
 type ResponseHandler func(resp *Response)

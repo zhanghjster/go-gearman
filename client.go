@@ -49,7 +49,7 @@ func (cm *ClientMisc) SetConnOption(name string) (string, error) {
 	var req = newRequestWithType(PtOptionReq)
 	req.SetConnOption(name)
 
-	resp, err := cm.sender.sendAndWait(req)
+	resp, err := cm.sender.sendAndWaitResp(req)
 	if err != nil {
 		return "", err
 	}
@@ -60,7 +60,7 @@ func (cm *ClientMisc) SetConnOption(name string) (string, error) {
 func (cm *ClientMisc) Echo(data []byte) ([]byte, error) {
 	var req = newRequestWithType(PtEchoReq)
 
-	resp, err := cm.sender.sendAndWait(req)
+	resp, err := cm.sender.sendAndWaitResp(req)
 	if err != nil {
 		return nil, err
 	}
