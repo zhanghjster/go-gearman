@@ -37,7 +37,7 @@ type ReqOptFunc func(*Request)
 type TaskOptFunc func(*Task)
 type TaskStatusOptFunc func(*Request)
 
-func (t *Task) IsBackground() bool {
+func (t *Task) NonBackground() bool {
 	return t.Type == PtSubmitJobBg ||
 		t.Type == PtSubmitJobHighBg ||
 		t.Type == PtSubmitJobLowBg
@@ -135,11 +135,9 @@ func (t *TaskSet) AddTask(funcName string, data []byte, opts ...TaskOptFunc) (*T
 	}
 
 	task.peer = resp.peer
-
 	task.Handle = handle
 
-	// save background task
-	if !task.IsBackground() {
+	if task.NonBackground() {
 		// save to task map
 		t.setTask(handle, task)
 

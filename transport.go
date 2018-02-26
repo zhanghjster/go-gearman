@@ -66,7 +66,7 @@ func (c *bufConnection) remoteAddr() net.Addr {
 }
 
 var (
-	ReconnectInterval = 1 * time.Second
+	DefaultReconnectInterval = 1 * time.Second
 )
 
 type TransportPeer struct {
@@ -107,7 +107,7 @@ func (t *Transport) Init(server string) *Transport {
 			conn, err := newConnection(server)
 			if err != nil {
 				log.Println("conn init fail " + err.Error())
-				time.Sleep(ReconnectInterval)
+				time.Sleep(DefaultReconnectInterval)
 				continue
 			}
 
