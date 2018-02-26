@@ -3,12 +3,13 @@ package gearman
 import (
 	"fmt"
 
+	"log"
+
 	"github.com/pkg/errors"
 )
 
 type Admin struct {
-	sender *sender
-	ch     chan *Response
+	sender *Sender
 }
 
 func NewAdmin(server []string) *Admin {
@@ -16,14 +17,14 @@ func NewAdmin(server []string) *Admin {
 }
 
 func (adm *Admin) Init(server []string) *Admin {
-	adm.ch = make(chan *Response)
-
 	ds := NewDispatcher(server)
 
-	adm.sender = &sender{ds: ds, respCh: make(chan *Response)}
+	adm.sender = newSender(ds)
 
 	handlers := []ResponseTypeHandler{
-		{[]PacketType{PtAdminResp}, func(resp *Response) { adm.sender.respCh <- resp }},
+		{[]PacketType{PtAdminResp}, func(resp *Response) {
+			adm.sender.respCh <- resp
+		}},
 	}
 
 	ds.RegisterResponseHandler(handlers...)
@@ -39,45 +40,46 @@ func (adm *Admin) Do(opt AdmOptFunc) (data [][]byte, err error) {
 
 	req := new(Request)
 
-	var waitResp bool
-	opt(req, &waitResp)
+	var noWait bool
+	opt(req, &noWait)
 
-	if waitResp {
-		resp, err := adm.sender.sendAndWait(req)
-		if err != nil {
-			return nil, err
-		} else {
-			return resp.ArgsBytes(), nil
-		}
+	log.Printf("send admin command %s, wait %v", req.AdminCmdString(), noWait)
+
+	if noWait {
+		err = adm.sender.send(req)
 	} else {
-		return nil, adm.sender.send(req)
+		var resp *Response
+		resp, err = adm.sender.sendAndWait(req)
+		if err == nil {
+			data = resp.ArgsBytes()
+		}
 	}
 
 	return
 }
 
 // option func for Do()
-type AdmOptFunc func(req *Request, noWait *bool)
+type AdmOptFunc func(*Request, *bool)
 
 // adm option for show worker list
 func AdmOptWorkers() AdmOptFunc {
-	return func(req *Request, no *bool) { req.SetType(PtAdminWorkers) }
+	return func(req *Request, noWait *bool) { req.SetType(PtAdminWorkers) }
 }
 
 // amd option for show status
 func AdmOptStatus() AdmOptFunc {
-	return func(req *Request, no *bool) { req.SetType(PtAdminStatus) }
+	return func(req *Request, noWait *bool) { req.SetType(PtAdminStatus) }
 }
 
 // adm option for show version
 func AdmOptVersion() AdmOptFunc {
-	return func(req *Request, no *bool) { req.SetType(PtAdminVersion) }
+	return func(req *Request, noWait *bool) { req.SetType(PtAdminVersion) }
 }
 
 // adm option for shutdown
 func AdmOptShutdown(graceful bool) AdmOptFunc {
-	return func(req *Request, no *bool) {
-		*no = true
+	return func(req *Request, noWait *bool) {
+		*noWait = true
 		req.SetType(PtAdminShutdown)
 		if graceful {
 			req.SetGraceful()
@@ -96,8 +98,8 @@ func AdmOptMaxQueueThreePriority(funcName string, high, normal, low int) AdmOptF
 }
 
 func maxQueueOpt(funcName, queue string) AdmOptFunc {
-	return func(req *Request, no *bool) {
-		*no = true
+	return func(req *Request, noWait *bool) {
+		*noWait = true
 		req.SetType(PtAdminMaxQueue)
 		req.SetFuncName(funcName)
 		req.SetMaxQueue(queue)

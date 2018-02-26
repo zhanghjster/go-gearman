@@ -7,15 +7,14 @@ import (
 
 	"bytes"
 
-	"net"
-
 	"github.com/pkg/errors"
 )
 
 type PacketType uint32
 
 const (
-	PtCanDo PacketType = iota + 1
+	PtNull PacketType = iota
+	PtCanDo
 	PtCantDo
 	PtResetAbilities
 	PtPreSleep
@@ -190,6 +189,8 @@ func (p *Packet) setArg(name ArgName, v []byte) error {
 		if len(mp) > 0 && p.args == nil {
 			p.args = make([][]byte, len(mp))
 		}
+		p.args[mp[name]] = v
+		return nil
 	}
 
 	return ErrArgNotSupported
@@ -368,10 +369,23 @@ type Request struct {
 
 	Timeout <-chan time.Time
 
-	remote    net.Addr // sendAndWait to picked server
-	broadcast bool     // sendAndWait to all server
+	broadcast bool // send to all server
 
-	resCh chan interface{} // for conn sendAndWait result
+	resCh chan interface{} // for conn send result
 }
+
+func newRequestWithType(tp PacketType) *Request {
+	req := new(Request)
+	req.SetType(tp)
+	return req
+}
+
+func newBroadcastRequestWithType(tp PacketType) *Request {
+	req := newRequestWithType(tp)
+	req.broadcast = true
+	return req
+}
+
+func newBroadcaseRequest() *Request { return &Request{broadcast: true} }
 
 type ResponseHandler func(resp *Response)

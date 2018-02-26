@@ -25,7 +25,7 @@ var (
 type bufConnection struct {
 	conn net.Conn
 	*bufio.ReadWriter
-	closeCh chan struct{}
+	flag FlagChan
 }
 
 func newConnection(addr string) (*bufConnection, error) {
@@ -35,8 +35,8 @@ func newConnection(addr string) (*bufConnection, error) {
 	}
 
 	var c = &bufConnection{
-		conn:    conn,
-		closeCh: make(chan struct{}),
+		conn: conn,
+		flag: make(FlagChan),
 		ReadWriter: bufio.NewReadWriter(
 			bufio.NewReader(conn),
 			bufio.NewWriter(conn),
@@ -46,23 +46,21 @@ func newConnection(addr string) (*bufConnection, error) {
 	return c, nil
 }
 
-func (c *bufConnection) closed() chan struct{} {
-	return c.closeCh
+func (c *bufConnection) closed() FlagChan {
+	return c.flag
 }
 
 func (c *bufConnection) close() {
-	if c.closeCh != nil {
-		close(c.closeCh)
-		c.conn.Close()
-	}
-}
-
-func (c *bufConnection) localAddr() net.Addr {
-	return c.conn.LocalAddr()
+	c.conn.Close()
+	close(c.flag)
 }
 
 func (c *bufConnection) remoteAddr() net.Addr {
 	return c.conn.RemoteAddr()
+}
+
+func (c *bufConnection) localAddr() net.Addr {
+	return c.conn.LocalAddr()
 }
 
 var (
@@ -71,7 +69,7 @@ var (
 
 type TransportPeer struct {
 	Remote net.Addr
-
+	Local  net.Addr
 	// broadcast conn close
 	flag FlagChan
 }
@@ -91,101 +89,127 @@ type Transport struct {
 	Peer *TransportPeer
 }
 
-func NewTransport(server string) *Transport {
+func NewTransport(server string) (*Transport, error) {
 	return new(Transport).Init(server)
 }
 
-func (t *Transport) Init(server string) *Transport {
+func (t *Transport) Init(server string) (*Transport, error) {
+	t.in = make(chan *Request)
+	t.out = make(chan *Response)
+
+	// do connect first
+	if err := t.connect(server); err != nil {
+		return nil, err
+	}
+
 	go func() {
-		// auto reconnect
 		for {
-			// close the old peer
-			if t.Peer != nil {
-				close(t.Peer.flag)
-			}
-
-			conn, err := newConnection(server)
-			if err != nil {
-				log.Println("conn init fail " + err.Error())
-				time.Sleep(DefaultReconnectInterval)
-				continue
-			}
-
-			log.Printf("connect %s suc", server)
-
-			// make new Peer
-			t.Peer = &TransportPeer{conn.remoteAddr(), make(FlagChan)}
-
-			t.bc = conn
-
 			var wg sync.WaitGroup
+			wg.Add(2)
 			go t.readLoop(&wg)
 			go t.writeLoop(&wg)
 			wg.Wait()
+
+			log.Printf("conn closed, reconnect after %v\n", DefaultReconnectInterval)
+			time.Sleep(DefaultReconnectInterval)
+
+			// do reconnect
+			t.connect(server)
 		}
 	}()
 
-	return t
+	return t, nil
 }
 
+// write request to remote server
 func (t *Transport) Write(req *Request) error {
-	return enqueRequestWithTimeout(t.in, req)
+	return enqueueRequestWithTimeout(t.in, req)
 }
 
+// read response until there is one
 func (t *Transport) Read() (*Response, error) {
-	p := <-t.out
-	return p, nil
+	return <-t.out, nil
+}
+
+func (t *Transport) connect(server string) error {
+	conn, err := newConnection(server)
+	if err != nil {
+		return err
+	}
+
+	t.bc = conn
+
+	// close the old peer
+	if t.Peer != nil {
+		close(t.Peer.flag)
+	}
+
+	t.Peer = &TransportPeer{
+		Remote: conn.remoteAddr(),
+		Local:  conn.localAddr(),
+		flag:   make(FlagChan),
+	}
+
+	return nil
 }
 
 func (t *Transport) readLoop(wg *sync.WaitGroup) {
-	wg.Add(1)
 	defer func() {
 		wg.Done()
 		t.bc.close()
 	}()
 
+	log.Printf("reader for %s => %s start\n", t.Peer.Local.String(), t.Peer.Remote.String())
+
+	r := &protocolReader{r: t.bc, hbf: make([]byte, HeaderSize)}
 	for {
-		var err error
-		r := &protocolReader{r: t.bc}
-		if err = r.read(); err != nil {
+		pt, lines, err := r.read()
+		if err != nil {
 			log.Printf("packet read err %s", err.Error())
 			continue
 		}
 
 		if IsConnErr(err) {
+			log.Printf("transport conn err %s", err.Error())
 			return
 		}
 
 		var resp = &Response{
-			Packet: Packet{
-				peer: t.Peer,
-				Type: r.Type(),
-				args: r.Lines(),
-			},
+			Packet: Packet{peer: t.Peer, Type: pt, args: lines},
 		}
+
+		log.Printf("send response to transport out")
 
 		t.out <- resp
 	}
 }
 
 func (t *Transport) writeLoop(wg *sync.WaitGroup) {
-	wg.Add(1)
 	defer wg.Done()
 
+	log.Printf("writer for %s => %s start\n", t.Peer.Local.String(), t.Peer.Remote.String())
+
+	pw := &protocolWriter{w: t.bc}
 	for {
 		select {
-		case req := <-t.in:
+		case req, ok := <-t.in:
+			if !ok {
+				log.Printf("fail to read from req chan")
+				return
+			}
+
 			var err error
-			if err = (&protocolWriter{w: t.bc}).write(req); err != nil {
+			if err = pw.write(req); err != nil {
 				log.Printf("packet write err, %s ", err.Error())
 			}
 
-			// write request result chan
+			// send back the result
+			if req.resCh != nil {
+				go func() { req.resCh <- err }()
+			}
+
 			if IsConnErr(err) {
-				// response the result
-				if req.resCh != nil {
-					go func() { req.resCh <- err }()
-				}
+				log.Printf("transport writer err %s", err.Error())
 				return
 			}
 
@@ -203,6 +227,7 @@ type protocolWriter struct {
 
 func (pw *protocolWriter) write(req *Request) error {
 	if req.IsAdmin() {
+		log.Printf("write adm command %s", req.AdminCmdString())
 		// plain text protocol
 		// write command string
 		if _, err := pw.w.WriteString(req.AdminCmdString()); err != nil {
@@ -211,6 +236,8 @@ func (pw *protocolWriter) write(req *Request) error {
 
 		// write args
 		for _, arg := range req.args {
+			log.Printf("write adm command arg %s", string(arg))
+
 			// write space
 			if _, err := pw.w.Write([]byte(" ")); err != nil {
 				return err
@@ -249,12 +276,14 @@ func (pw *protocolWriter) write(req *Request) error {
 		}
 
 		// write 4 byte size, big-endian
-		if err := binary.Write(pw.w, binary.BigEndian, size); err != nil {
+		if err := binary.Write(pw.w, binary.BigEndian, uint32(size)); err != nil {
 			return err
 		}
 
 		// write arg lines to conn
 		for i, line := range args {
+			log.Printf("write args line, size %d", len(line))
+
 			if _, err := pw.w.Write(line); err != nil {
 				return err
 			}
@@ -272,63 +301,65 @@ func (pw *protocolWriter) write(req *Request) error {
 }
 
 type protocolReader struct {
-	binary bool
-	r      *bufConnection
-	header []byte
-	lines  [][]byte
+	r   *bufConnection
+	hbf []byte // header buf
 }
 
-func (pr *protocolReader) read() error {
+func (pr *protocolReader) read() (PacketType, [][]byte, error) {
 	first, err := pr.r.Peek(1)
 	if err != nil {
-		return err
+		return PtNull, nil, err
 	}
 
-	pr.binary = bytes.Equal(first, null)
-	if pr.binary {
-		pr.header = make([]byte, HeaderSize)
-		n, err := pr.r.Read(pr.header)
+	var pt PacketType
+	var lines [][]byte
+
+	if bytes.Equal(first, null) {
+		log.Printf("read new binary packet")
+
+		// read the header 12 bytes
+		n, err := pr.r.Read(pr.hbf)
 		if n < HeaderSize {
-			err = errors.New(fmt.Sprintf("packet header size, %d expected but got %d", HeaderSize, n))
+			err = errors.New(fmt.Sprintf("packet header size %d, but %d expected", n, HeaderSize))
 		}
 		if err != nil {
-			return err
+			return PtNull, nil, err
 		}
 
-		args := make([]byte, PacketType(binary.BigEndian.Uint32(pr.header[8:])))
+		// parse the packet type
+		pt = PacketType(binary.BigEndian.Uint32(pr.hbf[4:8]))
+
+		// read the args
+		args := make([]byte, binary.BigEndian.Uint32(pr.hbf[8:]))
 		n, err = pr.r.Read(args)
 		if n < len(args) {
-			err = errors.New(fmt.Sprintf("packet lines size, %d expected but got %d", len(args), n))
+			err = errors.New(fmt.Sprintf("packet lines size %d, but %d expected", n, len(args)))
 		}
 		if err != nil {
-			return err
+			return PtNull, nil, err
 		}
 
-		pr.lines = bytes.Split(args, null)
+		// split args by "\0"
+		lines = bytes.Split(args, null)
 	} else {
+		log.Printf("read new adm response")
+
+		pt = PtAdminResp
 		for {
 			line, _, err := pr.r.ReadLine()
-			pr.lines = append(pr.lines, line)
-			if bytes.Equal(line, []byte(".")) || err != nil {
-				return err
+			log.Printf("read new line of adm response, %s", string(line))
+
+			if err != nil {
+				return PtNull, nil, err
+			}
+			lines = append(lines, line)
+			if bytes.Equal(line, []byte(".")) || bytes.Equal(line[0:2], []byte("OK")) {
+				break
 			}
 		}
 	}
 
-	return err
-}
-
-func (pr *protocolReader) Type() (pt PacketType) {
-	if !pr.binary {
-		pt = PtAdminResp
-	} else {
-		pt = PacketType(binary.BigEndian.Uint32(pr.header[4:8]))
-	}
-	return
-}
-
-func (pr *protocolReader) Lines() [][]byte {
-	return pr.lines
+	return pt, lines, nil
 }
 
 func IsConnErr(err error) bool {
