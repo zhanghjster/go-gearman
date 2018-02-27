@@ -2,10 +2,5 @@
 
 see examples
 
-#### Client
 
-~~~go
-
-
-~~~
 
