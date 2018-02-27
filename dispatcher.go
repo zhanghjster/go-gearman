@@ -109,7 +109,7 @@ func (s *Sender) sendAndWaitResp(req *Request) (resp *Response, err error) {
 		return nil, err
 	}
 
-	Log.Println("miscSender wait for response")
+	Log.Println("sender wait for response")
 
 	// wait for response
 	select {

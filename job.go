@@ -2,7 +2,7 @@ package gearman
 
 import "errors"
 
-type JobHandle func(job *Job)
+type JobHandle func(job *Job) ([]byte, error)
 
 type Job struct {
 	*Response

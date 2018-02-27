@@ -1,6 +1,7 @@
 package gearman
 
 import (
+	"log"
 	"sync"
 	"time"
 )
@@ -126,7 +127,7 @@ func (w *Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerO
 			for {
 				peer, err := w.sender.send(req)
 				if err != nil {
-					Log.Printf("register func %s err, %s", funcName, err.Error())
+					Log.Printf("register func '%s' err, %s", funcName, err.Error())
 
 					// sleep before re-register
 					time.Sleep(w.registerInterval)
@@ -138,7 +139,7 @@ func (w *Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerO
 					}
 				}
 
-				Log.Printf("register func %s to %s suc", funcName, server)
+				Log.Printf("register func '%s' to %s suc", funcName, server)
 
 				// 'cannot' only send once
 				if regOnce {
@@ -157,10 +158,6 @@ func (w *Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerO
 	return nil
 }
 
-func (w *Worker) ResetAbilities(server string) {
-	w.sendRequest(newRequestToServerWithType(server, PtResetAbilities))
-}
-
 func (w *Worker) Work() {
 	var wg sync.WaitGroup
 
@@ -175,21 +172,74 @@ func (w *Worker) Work() {
 				w.descJobs()
 
 				// retrieve next job
-				var req = newRequestToServerWithType(server, PtGrabJob)
-
-				Log.Printf("send grab request to %s", s)
+				var req = newRequestToServerWithType(server, PtGrabJobAll)
 
 				resp, err := w.sender.sendAndWaitResp(req)
 				if err != nil {
-					Log.Printf("send grab req to %s fail", server)
+					Log.Printf("send grab req to %s fail, %s", server, err.Error())
 					return
 				}
 
+				Log.Printf("send grab request to %s suc", s)
+
 				switch resp.Type {
 				case PtNoJob:
-					w.sleepUntilWakeup(server)
+					// send pre sleep then wait for wake up signal
+					var req = newRequestToServerWithType(server, PtPreSleep)
+					peer, err := w.sender.send(req)
+					if err != nil {
+						Log.Printf("send pre sleep packet to %s fail, %s", server, err)
+						return
+					}
+
+					Log.Printf("job retriever for %s wait for weekup", server)
+
+					select {
+					case <-w.noopFlag[server]:
+						Log.Printf("job retriever for %s weekup", server)
+					case <-peer.Closed():
+						Log.Printf("job retriever for %s err. ", err.Error())
+					}
 				case PtJobAssign, PtJobAssignUnique, PtJobAssignAll:
-					go w.doJob(resp)
+					go func(resp *Response) {
+						defer w.descJobs()
+
+						var job = &Job{w: w, Response: resp}
+
+						funcName, _ := job.GetFuncName()
+						handle, ok := w.jobHandles[funcName]
+						if !ok {
+							Log.Printf("no worker handle found for job %s", funcName)
+							return
+						}
+
+						handleId, err := job.Response.GetHandle()
+						if err != nil {
+							log.Printf("get job handle err, %s", err)
+							return
+						}
+
+						// handle the job
+						data, err := handle(job)
+
+						var req = newRequestTo(server)
+						// set req type
+						if err != nil {
+							req.SetType(PtWorkFail)
+						} else {
+							req.SetType(PtWorkComplete)
+							req.SetData(data)
+						}
+
+						if err = req.SetHandle(handleId); err != nil {
+							log.Printf("req set handle err, %s", err.Error())
+							return
+						}
+
+						if _, err := w.sender.send(req); err != nil {
+							Log.Printf("send job result request %d err, %s", req.Type, err.Error())
+						}
+					}(resp)
 				}
 			}
 		}(s)
@@ -198,37 +248,8 @@ func (w *Worker) Work() {
 	wg.Wait()
 }
 
-func (w *Worker) sleepUntilWakeup(server string) {
-	var req = newRequestToServerWithType(server, PtPreSleep)
-	peer, err := w.sender.send(req)
-	if err != nil {
-		Log.Printf("send pre sleep packet to %s fail, %s", server, err)
-		return
-	}
-
-	Log.Printf("job retriever for %s sleep", server)
-
-	select {
-	case <-w.noopFlag[server]:
-		Log.Printf("job retriever for %s weekup", server)
-	case <-peer.Closed():
-		Log.Printf("job retriever for %s err. ", err.Error())
-	}
-}
-
-func (w *Worker) doJob(resp *Response) {
-	defer w.descJobs()
-
-	Log.Printf("make new job")
-	var job = &Job{w: w, Response: resp}
-
-	funcName, _ := job.GetFuncName()
-	handle, ok := w.jobHandles[funcName]
-	if !ok {
-		return
-	}
-
-	handle(job)
+func (w *Worker) ResetAbilities(server string) {
+	w.sendRequest(newRequestToServerWithType(server, PtResetAbilities))
 }
 
 func (w *Worker) incJobs() {

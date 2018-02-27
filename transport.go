@@ -137,8 +137,6 @@ func (t *Transport) readLoop(wg *sync.WaitGroup) {
 			Packet: Packet{Type: pt, args: lines},
 		}
 
-		Log.Printf("send response to transport out")
-
 		t.out <- resp
 	}
 }
@@ -319,8 +317,6 @@ func (pr *protocolReader) read() (PacketType, [][]byte, error) {
 	var lines [][]byte
 
 	if bytes.Equal(first, null) {
-		Log.Printf("read new binary packet")
-
 		// read the header 12 bytes
 		n, err := pr.r.Read(pr.hbf)
 		if n < HeaderSize {
@@ -346,8 +342,6 @@ func (pr *protocolReader) read() (PacketType, [][]byte, error) {
 		// split args by "\0"
 		lines = bytes.Split(args, null)
 	} else {
-		Log.Printf("read new adm response")
-
 		pt = PtAdminResp
 		for {
 			line, _, err := pr.r.ReadLine()
