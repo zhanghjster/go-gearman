@@ -26,12 +26,12 @@ func main() {
 		funcName,
 		// data sent to worker
 		[]byte("background"),
-		// gearman.TaskOptHigh(), 				// set task priority high
-		// gearman.TaskOptHighBackground(), 	// set background task high priority
-		// gearman.TaskOptLow(),				// set task priority low
-		// gearman.TaskOptLowBackground(),		// set background task low priority
-		// gearman.TaskOptNormal(), 			// set task priority normal
-		// gearman.TaskOptNormalBackground(),	// set background task normal priority
+		// gearman.TaskOptHigh(), set task priority high
+		// gearman.TaskOptHighBackground(), set background task high priority
+		// gearman.TaskOptLow(), set task priority low
+		// gearman.TaskOptLowBackground(),	set background task low priority
+		// gearman.TaskOptNormal(), set task priority normal
+		// gearman.TaskOptNormalBackground(), set background task normal priority
 		gearman.TaskOptNormalBackground(),
 	)
 
