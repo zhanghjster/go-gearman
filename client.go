@@ -14,7 +14,7 @@ func (c *Client) Init(server []string) *Client {
 
 	// set up modules
 	c.ts = NewTaskSet().registerResponseHandle(ds)
-	c.cm = NewClientMisc().registerResponseHandler(ds)
+	c.cm = newClientMisc().registerResponseHandler(ds)
 
 	return c
 }
@@ -29,8 +29,8 @@ func (c *Client) TaskStatus(task *Task, opts ...TaskStatusOptFunc) (TaskStatus, 
 	return c.ts.TaskStatus(task, opts...)
 }
 
-func (c *Client) Echo(data []byte) ([]byte, error) {
-	return c.cm.Echo(data)
+func (c *Client) Echo(server string, data []byte) ([]byte, error) {
+	return c.cm.Echo(server, data)
 }
 
 func (c *Client) SetConnOption(name string) (string, error) {
@@ -41,7 +41,7 @@ type ClientMisc struct {
 	sender *Sender
 }
 
-func NewClientMisc() *ClientMisc {
+func newClientMisc() *ClientMisc {
 	return new(ClientMisc)
 }
 
@@ -57,8 +57,9 @@ func (cm *ClientMisc) SetConnOption(name string) (string, error) {
 	return resp.GetConnOption()
 }
 
-func (cm *ClientMisc) Echo(data []byte) ([]byte, error) {
-	var req = newRequestWithType(PtEchoReq)
+func (cm *ClientMisc) Echo(server string, data []byte) ([]byte, error) {
+	var req = newRequestToServerWithType(server, PtEchoReq)
+	req.SetData(data)
 
 	resp, err := cm.sender.sendAndWaitResp(req)
 	if err != nil {

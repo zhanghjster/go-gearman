@@ -228,6 +228,8 @@ type protocolWriter struct {
 }
 
 func (pw *protocolWriter) write(req *Request) error {
+	Log.Printf("write req packet, type %d", req.Type)
+
 	if req.IsAdmin() {
 		Log.Printf("write adm command %s", req.AdminCmdString())
 		// plain text protocol
@@ -262,7 +264,7 @@ func (pw *protocolWriter) write(req *Request) error {
 			return err
 		}
 
-		// write 4 byte type, big-engian
+		// write 4 byte type, big-endian
 		if err := binary.Write(pw.w, binary.BigEndian, req.Type); err != nil {
 			return err
 		}
@@ -284,11 +286,11 @@ func (pw *protocolWriter) write(req *Request) error {
 
 		// write arg lines to conn
 		for i, line := range args {
-			Log.Printf("write args line, size %d", len(line))
-
 			if _, err := pw.w.Write(line); err != nil {
 				return err
 			}
+
+			Log.Printf("write arg line '%s'", string(line))
 
 			// write null terminate
 			if i != len(args)-1 {
@@ -341,6 +343,8 @@ func (pr *protocolReader) read() (PacketType, [][]byte, error) {
 
 		// split args by "\0"
 		lines = bytes.Split(args, null)
+
+		Log.Printf("read packet %d", pt)
 	} else {
 		pt = PtAdminResp
 		for {

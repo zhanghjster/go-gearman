@@ -204,16 +204,16 @@ func (w *Worker) Work() {
 					go func(resp *Response) {
 						defer w.descJobs()
 
-						var job = &Job{w: w, Response: resp}
+						var job = &Job{w: w, resp: resp}
 
-						funcName, _ := job.GetFuncName()
+						funcName, _ := job.resp.GetFuncName()
 						handle, ok := w.jobHandles[funcName]
 						if !ok {
 							Log.Printf("no worker handle found for job %s", funcName)
 							return
 						}
 
-						handleId, err := job.Response.GetHandle()
+						handleId, err := job.resp.GetHandle()
 						if err != nil {
 							log.Printf("get job handle err, %s", err)
 							return
@@ -270,32 +270,4 @@ func (w *Worker) descJobs() {
 func (w *Worker) sendRequest(req *Request) error {
 	_, err := w.sender.send(req)
 	return err
-}
-
-type WorkOptFunc func(req *Request)
-
-func WorkOptStatus(n, d uint32) WorkOptFunc {
-	return func(req *Request) {
-		req.SetType(PtWorkStatus)
-		req.SetPercent(n, d)
-	}
-}
-func WorkOptFail() WorkOptFunc {
-	return func(req *Request) { req.SetType(PtWorkFail) }
-}
-func WorkOptComplete(data []byte) WorkOptFunc {
-	return workTypeDataOptFuncWrapper(PtWorkComplete, data)
-}
-func WorkOptWarning(data []byte) WorkOptFunc {
-	return workTypeDataOptFuncWrapper(PtWorkWarning, data)
-}
-func WorkOptException(data []byte) WorkOptFunc {
-	return workTypeDataOptFuncWrapper(PtWorkException, data)
-}
-
-func workTypeDataOptFuncWrapper(tp PacketType, data []byte) WorkOptFunc {
-	return func(req *Request) {
-		req.SetType(tp)
-		req.SetData(data)
-	}
 }
