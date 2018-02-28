@@ -15,9 +15,6 @@ func main() {
 
 	var funcName = "test"
 
-	// job handler,
-	// return []byte as data to client,
-	// err means job fail
 	var handle = func(job *gearman.Job) ([]byte, error) {
 		// get the data
 		data := job.Data()
@@ -52,9 +49,6 @@ func main() {
 		funcName,
 		// handler for job process
 		handle,
-		// gearman.WorkerOptCanDo() for register
-		// gearman.WorkerOptCantDo() for un-register
-		// gearman.WorkerOptCanDoTimeout(10 * time.Second) for register can do with timeout
 		gearman.WorkerOptCanDo(),
 	)
 	if err != nil {

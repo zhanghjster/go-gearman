@@ -73,57 +73,57 @@ if the error is 'NetworkError', you should retrive the task status by TaskStatus
 
 'opt' set other option, see the list beblow
 
-##### TaskOptNormal()
+* TaskOptNormal()
 
-set task non-background with normal priority, it is default for every task
+  set task non-background with normal priority, it is default for every task
 
-##### TaskOptNormalBackground()
+* TaskOptNormalBackground()
 
-set task background with normal priority
+  task background with normal priority
 
-##### TaskOptLow()
+* TaskOptLow()
 
-set task non-background with low priority
+  set task non-background with low priority
 
-##### TaskOptLowBackground()
+* TaskOptLowBackground()
 
-set task background with low priority
+  set task background with low priority
 
-##### TaskOptHigh()
+* TaskOptHigh()
 
-set task non-background with high priority
+  set task non-background with high priority
 
-##### TaskOptHighBackground()
+* TaskOptHighBackground()
 
-set task background with high priority
+  set task background with high priority
 
-##### TaskOptOnData(handler  ResponseHandler) 
+* TaskOptOnData(handler  ResponseHandler)
 
-set callback when there is data sent from worker by job.Update() api
+  set callback when there is data sent from worker by job.Update() api
 
-##### TaskOptUniqueId(id string)
+* TaskOptUniqueId(id string)
 
-set task unique id
+  set task unique id
 
-##### TaskOptReducer(name string)
+* TaskOptReducer(name string)
 
-set task reducer name
+  set task reducer name
 
-##### TaskCreationTimeout(d time.Duration) 
+* TaskCreationTimeout(d time.Duration)
 
-set timeout of task creation
+  set timeout of task creation
 
-#### TaskStatus(task *Task, opts …TaskStatusOptFunc) (TaskResult, error)
+* TaskStatus(task *Task, opts …TaskStatusOptFunc) (TaskResult, error)
 
-retrieve the task status, 'opts' set the options, see the list below
+  retrieve the task status, 'opts' set the options, see the list below
 
-##### TaskOptStatusUniqueId(id string)
+* TaskOptStatusUniqueId(id string)
 
-set task unique id 
+  set task unique id 
 
-##### TaskOptStatusHandle(id string)
+* TaskOptStatusHandle(id string)
 
-set task handle of the task 
+  set task handle of the task 
 
 #### Task API
 
@@ -215,17 +215,17 @@ func (*Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerOpt
 
 Do function register and unregister, 'funcName' is the function worker will handle, 'handle' is the processor of job. 'opt' set other options, see the list blow
 
-##### WorkerOptCanDo()
+* WorkerOptCanDo()
 
-register the handle of 'funcName'
+  register the handle of 'funcName'
 
-##### WorkerOptCanDoTimeout(t time.Duration)
+* WorkerOptCanDoTimeout(t time.Duration)
 
-same as WorkerOptCanDo() but with a timeout value, after the timeout server will set the job failed and notify to the client
+  same as WorkerOptCanDo() but with a timeout value, after the timeout server will set the job failed and notify to the client
 
-##### WorkerOptCanotDo() 
+* WorkerOptCanotDo()
 
-unregister the handle of 'funcName'
+  unregister the handle of 'funcName'
 
 #### func (*Worker) Work()
 
@@ -315,41 +315,41 @@ send admin command to 'server'. plain text line returned
 
 command 'version' 'workers' 'status' 'shutdown' 'shutdown' 'maxqueue' supported, set by 'opt' functions, see the list blow
 
-##### AdmOptVersion()
+* AdmOptVersion()
 
-show the version of server
+  show the version of server
 
-##### AdmOptWorkers()
+* AdmOptWorkers()
 
-show the worker list of server, returned text line formatter is 
+  show the worker list of server, returned text line formatter is 
 
 ~~~
 FD IP-ADDRESS CLIENT-ID : FUNCTION ...
 ~~~
 
-##### AdmOptStatus()
+* AdmOptStatus()
 
-show the registered functions of server, returned text line formateter is
+  show the registered functions of server, returned text line formateter is
 
 ~~~
 FUNCTION\tTOTAL\tRUNNING\tAVAILABLE_WORKERS
 ~~~
 
-##### AdmOptMaxQueueAll(funcName string, n int)
+* AdmOptMaxQueueAll(funcName string, n int)
 
- set command 'maxqueue', set  max queue size for a function for all priority
+  set command 'maxqueue', set  max queue size for a function for all priority
 
-##### AdmOptMaxQueueThreePriority(funcName string, high, normal, low int)
+* AdmOptMaxQueueThreePriority(funcName string, high, normal, low int)
 
- set max queue size for a function for three priority
+  set max queue size for a function for three priority
 
-##### AdmOptShutdown()
+* AdmOptShutdown()
 
-shutdown the server
+  shutdown the server
 
-##### AdmOptShutdownGraceful()
+* AdmOptShutdownGraceful()
 
-shutdown the server graceful
+  shutdown the server graceful
 
 ## License
 
