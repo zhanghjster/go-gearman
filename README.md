@@ -1,10 +1,10 @@
-### Install
+## Install
 
 ~~~go
 go get github.com/zhanghjster/go-gearman
 ~~~
 
-### Client
+## Client
 
 ```go
 var server = []string{"localhost:4730", "localhost:4731"}
@@ -57,7 +57,15 @@ for i := 0; i < 10; i++ {
 }
 ```
 
-###  Server
+### func(*Client) AddTask()
+
+~~~go
+func (*Client) AddTask(funcName string, data []byte, opt ...TaskOptFunc) (*Task, error)
+~~~
+
+create new task, 'funcName' is the function name of worker registered, 'data' is the opaque data worker should handle
+
+##  Server
 
 ~~~go
 var server = []string{"localhost:4730", "localhost:4731"}
@@ -115,7 +123,9 @@ if err != nil {
 worker.Work()
 ~~~
 
-##### func(*Worker) MaxParallelJobs() 
+### Worker API
+
+#### func(*Worker) MaxParallelJobs()
 
 ~~~go
 func (*Worker)MaxParallelJobs(n int)
@@ -123,7 +133,7 @@ func (*Worker)MaxParallelJobs(n int)
 
 set max parallel jobs worker can handle, not this limitation default
 
-##### func (*Worker)RegisterFunction()
+#### func (*Worker)RegisterFunction()
 
 ~~~go
 func (*Worker) RegisterFunction(funcName string, handle JobHandle, opt WorkerOptFunc) error
@@ -137,15 +147,45 @@ Do function register and unregister, 'funcName' is the function worker will hand
 
 'WorkerOptCanotDo()', unregister the handle of 'funcName'
 
-##### func (*Worker) Work()
+#### func (*Worker) Work()
 
 ~~~go
 func (*Worker) Work() 
 ~~~
 
-start grab the jobs from server and do handle
+start grab the jobs from server and process
 
-### Admin
+#### type JobHandle 
+
+~~~go
+type JobHandle func(job *Job) (data []byte, err error)
+~~~
+
+handler of job worker set when register the function for processing the job client submitted to server. send backed the 'data' to client if there is, 'err' indicate job failed
+
+### Job API
+
+#### func (*Job) Update()
+
+~~~go
+func (*Job) Update(opt JobOptFunc) error 
+~~~
+
+upate job status or send data to client during job running. 'opt' set the options, see the list below
+
+'JobOptStatus(n, d uint32)', send job complete precent numerator and denominator to client
+
+'JobOptData(data []byte)', send data to client during runnning
+
+#### func (*Job) Data() 
+
+~~~go
+func (*Job) Data() []byte
+~~~
+
+return the opaque data client send to worker
+
+## Admin
 
 ~~~go
 var server = []string{"127.0.0.1:4730", "localhost:4731"}
@@ -181,7 +221,7 @@ for _, s := range server {
 }
 ~~~
 
-##### func (*Admin) Do()
+### func (*Admin) Do()
 
 ~~~go
 func (*Admin) Do(server string, opt AdmOptFunc) ([]string, error)
@@ -213,7 +253,7 @@ FUNCTION\tTOTAL\tRUNNING\tAVAILABLE_WORKERS
 
 'AdmOptShutdownGraceful()', shutdown the server graceful
 
-### License
+## License
 
 MIT
 
