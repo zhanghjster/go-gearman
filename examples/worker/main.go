@@ -9,9 +9,9 @@ import (
 )
 
 func main() {
-	var server = "localhost:4730"
+	var server = []string{"localhost:4730", "localhost:4731"}
 
-	var worker = gearman.NewWorker([]string{server})
+	var worker = gearman.NewWorker(server)
 
 	var funcName = "test"
 
@@ -22,15 +22,15 @@ func main() {
 		// get the data
 		data := job.Data()
 
-		log.Printf("data string %s", string(data))
+		log.Printf("get job, data is '%s'", string(data))
 
 		if string(data) == "background" {
-			log.Printf("process backgroup job, data %s", string(data))
+			log.Printf("process backgroup job, data '%s'", string(data))
 		}
 
 		var retData []byte
 		if string(data) == "non-background" {
-			log.Printf("process non-backgroud job, data %s", string(data))
+			log.Printf("process non-backgroud job, data '%s'", string(data))
 
 			// send hello to the client
 			err := job.Update(gearman.JobOptData([]byte("data for job update")))

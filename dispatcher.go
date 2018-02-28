@@ -109,9 +109,9 @@ func (s *Sender) sendAndWaitResp(req *Request) (resp *Response, err error) {
 		return nil, err
 	}
 
-	Log.Println("sender wait for response")
+	Log.Println("sender Wait for response")
 
-	// wait for response
+	// Wait for response
 	select {
 	case resp = <-s.respCh:
 	case <-peer.Closed():
@@ -130,7 +130,7 @@ func (s *Sender) send(req *Request) (peer *TransportPeer, err error) {
 		return nil, err
 	}
 
-	// wait for result
+	// Wait for result
 	res := <-req.retCh
 	switch res.(type) {
 	case error:

@@ -184,7 +184,7 @@ func (w *Worker) Work() {
 
 				switch resp.Type {
 				case PtNoJob:
-					// send pre sleep then wait for wake up signal
+					// send pre sleep then Wait for wake up signal
 					var req = newRequestToServerWithType(server, PtPreSleep)
 					peer, err := w.sender.send(req)
 					if err != nil {
@@ -192,7 +192,7 @@ func (w *Worker) Work() {
 						return
 					}
 
-					Log.Printf("job retriever for %s wait for weekup", server)
+					Log.Printf("job retriever for %s Wait for weekup", server)
 
 					select {
 					case <-w.noopFlag[server]:

@@ -7,22 +7,28 @@ import (
 )
 
 func main() {
-	var server = "localhost:4730"
+	// TODO:
+	// 1. 两台 server 的task分配
+	// 2. server的容错
 
-	var client = gearman.NewClient([]string{server})
+	var server = []string{"localhost:4730", "localhost:4731"}
+
+	var client = gearman.NewClient(server)
 
 	// echo for test
-	ret, err := client.Echo(server, []byte("hello"))
-	if err != nil {
-		log.Fatal(err)
+	for _, s := range server {
+		ret, err := client.Echo(s, []byte("hello"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("echo, %s return %s", s, string(ret))
 	}
-	log.Println("echo return ", string(ret))
 
 	var funcName = "test"
 
 	// do background task
 	client.AddTask(
-		// funcion name
+		// function name
 		funcName,
 		// data sent to worker
 		[]byte("background"),
@@ -35,23 +41,28 @@ func main() {
 		gearman.TaskOptNormalBackground(),
 	)
 
-	// do non-background task, block until task complete
-	client.AddTask(
-		funcName,
-		[]byte("non-background"),
-		// handler for task complete
-		gearman.TaskOptOnComplete(func(resp *gearman.Response) {
-			data, _ := resp.GetData()
-			log.Printf("task complete, data '%s'", string(data))
-		}),
-		// handler for task data update
-		gearman.TaskOptOnData(func(resp *gearman.Response) {
-			data, _ := resp.GetData()
-			log.Printf("task update '%s'", string(data))
-		}),
-		// handler for task fail
-		gearman.TaskOptOnFail(func(resp *gearman.Response) {
-			log.Printf("task failed")
-		}),
-	)
+	for i := 0; i < 10; i++ {
+		log.Printf("run non-background task %d", i)
+
+		// do non-background task, block until task complete
+		task, err := client.AddTask(
+			funcName,
+			[]byte("non-background"),
+			// handler for task data update
+			gearman.TaskOptOnData(func(resp *gearman.Response) {
+				data, _ := resp.GetData()
+				log.Printf("task update, data returned from worker is '%s'", string(data))
+			}),
+		)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		log.Printf("task send to %s", task.Remote())
+
+		// wait for complete
+		data, err := task.Wait()
+		log.Printf("task finished, returned value '%s'", string(data))
+	}
+
 }

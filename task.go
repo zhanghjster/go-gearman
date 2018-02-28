@@ -16,9 +16,7 @@ type Task struct {
 
 	Handle string // set by response
 
-	OnFail     ResponseHandler
-	OnData     ResponseHandler
-	OnComplete ResponseHandler
+	OnData ResponseHandler
 
 	reqOpt []ReqOptFunc
 
@@ -26,9 +24,7 @@ type Task struct {
 	respCh chan *Response
 
 	peer *TransportPeer
-
-	// for close
-	done chan struct{}
+	ts   *TaskSet
 }
 
 type ReqOptFunc func(*Request)
@@ -36,47 +32,48 @@ type TaskOptFunc func(*Task)
 type TaskStatusOptFunc func(*Request)
 
 func (t *Task) NonBackground() bool {
-	return !(t.Type == PtSubmitJobBg ||
-		t.Type == PtSubmitJobHighBg ||
-		t.Type == PtSubmitJobLowBg)
+	return t.Type == PtSubmitJob ||
+		t.Type == PtSubmitJobHigh ||
+		t.Type == PtSubmitJobLow
 }
 
-func (t *Task) wait() error {
-	var done bool
-	for !done {
+func (t *Task) Remote() string {
+	return t.peer.Remote
+}
+
+// non-background job wait for complete
+func (t *Task) Wait() ([]byte, error) {
+	if !t.NonBackground() {
+		return nil, errors.New("no wait for background task")
+	}
+
+	// remove from task set
+	defer t.ts.removeTask(t.peer.Remote, t.Handle)
+
+	var wg sync.WaitGroup
+	for {
 		select {
 		case resp := <-t.respCh:
-			Log.Printf("task get response %d", resp.Type)
-			var handler ResponseHandler
 			switch resp.Type {
 			case PtWorkComplete:
-				handler = func(resp *Response) {
-					defer t.Done()
-					Log.Printf("handle complete ")
-					if t.OnComplete != nil {
-						t.OnComplete(resp)
-					}
-				}
-				done = true
+				return resp.GetData()
 			case PtWorkData:
-				handler = t.OnData
+				wg.Add(1)
+				go func() {
+					wg.Done()
+					if t.OnData != nil {
+						t.OnData(resp)
+					}
+				}()
 			case PtWorkFail:
-				handler = t.OnFail
-			}
-
-			if handler != nil {
-				handler(resp)
+				return nil, TaskFailError
 			}
 		case <-t.peer.Closed():
-			return errors.New("conn closed")
+			return nil, NetworkError
 		}
 	}
 
-	return nil
-}
-
-func (t *Task) Done() {
-	close(t.done)
+	return nil, nil
 }
 
 type TaskSet struct {
@@ -99,7 +96,6 @@ func (t *TaskSet) AddTask(funcName string, data []byte, opts ...TaskOptFunc) (*T
 	var task = &Task{
 		FuncName: funcName,
 		Type:     defaultTaskPacketType,
-		done:     make(chan struct{}),
 		respCh:   make(chan *Response),
 	}
 
@@ -139,14 +135,8 @@ func (t *TaskSet) AddTask(funcName string, data []byte, opts ...TaskOptFunc) (*T
 	task.Handle = handle
 
 	if task.NonBackground() {
-		// save to task map
 		t.setTask(task.peer.Remote, handle, task)
-
-		// wait for task finished
-		err = task.wait()
-
-		// remote from task map
-		t.removeTask(task.peer.Remote, task.Handle)
+		task.ts = t
 	}
 
 	return task, err
@@ -268,19 +258,9 @@ func TaskOptLow() TaskOptFunc { return taskTypeOpt(PtSubmitJobLow) }
 // set low priority background task
 func TaskOptLowBackground() TaskOptFunc { return taskTypeOpt(PtSubmitJobLowBg) }
 
-// set async task complete callback
-func TaskOptOnComplete(handler ResponseHandler) TaskOptFunc {
-	return func(t *Task) { t.OnComplete = handler }
-}
-
 // set async task data update callback
 func TaskOptOnData(handler ResponseHandler) TaskOptFunc {
 	return func(t *Task) { t.OnData = handler }
-}
-
-// set async task fail callback
-func TaskOptOnFail(handler ResponseHandler) TaskOptFunc {
-	return func(t *Task) { t.OnFail = handler }
 }
 
 // set task unique id
