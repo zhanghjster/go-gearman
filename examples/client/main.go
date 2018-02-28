@@ -7,10 +7,6 @@ import (
 )
 
 func main() {
-	// TODO:
-	// 1. 两台 server 的task分配
-	// 2. server的容错
-
 	var server = []string{"localhost:4730", "localhost:4731"}
 
 	var client = gearman.NewClient(server)

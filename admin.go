@@ -29,7 +29,7 @@ func (adm *Admin) Init(server []string) *Admin {
 }
 
 // send admin command, see AdmOptFuncs for command options
-func (adm *Admin) Do(server string, opt AdmOptFunc) (data [][]byte, err error) {
+func (adm *Admin) Do(server string, opt AdmOptFunc) (data []string, err error) {
 	if opt == nil {
 		return nil, errors.New("admin cmd not set")
 	}
@@ -45,7 +45,9 @@ func (adm *Admin) Do(server string, opt AdmOptFunc) (data [][]byte, err error) {
 		var resp *Response
 		resp, err = adm.sender.sendAndWaitResp(req)
 		if err == nil {
-			data = resp.ArgsBytes()
+			for _, line := range resp.ArgsBytes() {
+				data = append(data, string(line))
+			}
 		}
 	} else {
 		_, err = adm.sender.send(req)

@@ -6,8 +6,8 @@ type FlagChan chan struct{}
 
 var Flag struct{}
 
-func PrintLines(lines [][]byte) {
+func PrintLines(lines []string) {
 	for _, line := range lines {
-		fmt.Println(string(line))
+		fmt.Println(line)
 	}
 }
