@@ -1,10 +1,10 @@
-#### Install
+### Install
 
 ~~~go
 go get github.com/zhanghjster/go-gearman
 ~~~
 
-#### Client
+### Client
 
 ```go
 var server = []string{"localhost:4730", "localhost:4731"}
@@ -57,9 +57,7 @@ for i := 0; i < 10; i++ {
 }
 ```
 
-
-
-#### Server
+###  Server
 
 ~~~go
 var server = []string{"localhost:4730", "localhost:4731"}
@@ -147,7 +145,7 @@ func (*Worker) Work()
 
 start grab the jobs from server and do handle
 
-#### Admin
+### Admin
 
 ~~~go
 var server = []string{"127.0.0.1:4730", "localhost:4731"}
@@ -215,7 +213,7 @@ FUNCTION\tTOTAL\tRUNNING\tAVAILABLE_WORKERS
 
 'AdmOptShutdownGraceful()', shutdown the server graceful
 
-#### License
+### License
 
 MIT
 
